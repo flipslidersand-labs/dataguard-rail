@@ -330,7 +330,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
- "itertools 0.13.0",
+ "itertools",
  "num-traits",
  "oorandom",
  "page_size",
@@ -350,7 +350,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8d80a2f4f5b554395e47b5d8305bc3d27813bacb73493eb1001e8f76dae29ea"
 dependencies = [
  "cast",
- "itertools 0.13.0",
+ "itertools",
 ]
 
 [[package]]
@@ -415,7 +415,7 @@ dependencies = [
  "criterion",
  "csv",
  "petgraph",
- "prost",
+ "prost 0.14.4",
  "regex",
  "serde",
  "serde_json",
@@ -719,15 +719,6 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
@@ -943,17 +934,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "deb1435c188b76130da55f17a466d252ff7b1418b2ad3e037d127b94e3411f29"
 dependencies = [
  "bytes",
+]
+
+[[package]]
+name = "prost"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "528ac67416ff8646872a3c02cad9cc4ee5dc9f9540c9b10771855c95cb2e5ae1"
+dependencies = [
+ "bytes",
  "prost-derive",
 ]
 
 [[package]]
 name = "prost-derive"
-version = "0.12.6"
+version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
+checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -1394,7 +1394,7 @@ dependencies = [
  "hyper-timeout",
  "percent-encoding",
  "pin-project",
- "prost",
+ "prost 0.12.6",
  "rustls-pemfile",
  "rustls-pki-types",
  "tokio",
