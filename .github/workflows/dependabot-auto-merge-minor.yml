@@ -11,4 +11,4 @@ permissions:
 
 jobs:
   promote:
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@d114211a23c11813b0dcc886c0aa5e9c10f6585d
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@5f38244e9beed38126f1ef0f8bf868e671c0fba2 # qa-workflows#39 (squash merge)
