@@ -90,6 +90,9 @@ mod tests {
             cli_csr.to_str().unwrap(),
             "-subj",
             "/CN=client.dataguard.local",
+            // rustls は X.509 v1 を拒否する（UnsupportedCertVersion）ため、v3 になるよう拡張を付ける
+            "-addext",
+            "basicConstraints=CA:FALSE",
         ]));
         run(Command::new("openssl").args([
             "x509",
@@ -105,6 +108,8 @@ mod tests {
             cli_crt.to_str().unwrap(),
             "-days",
             "1",
+            "-copy_extensions",
+            "copy",
         ]));
 
         (
@@ -149,6 +154,8 @@ mod tests {
             cli_csr.to_str().unwrap(),
             "-subj",
             "/CN=untrusted-client",
+            "-addext",
+            "basicConstraints=CA:FALSE",
         ]));
         run(Command::new("openssl").args([
             "x509",
@@ -164,6 +171,8 @@ mod tests {
             cli_crt.to_str().unwrap(),
             "-days",
             "1",
+            "-copy_extensions",
+            "copy",
         ]));
         (
             cli_crt.to_str().unwrap().to_string(),
