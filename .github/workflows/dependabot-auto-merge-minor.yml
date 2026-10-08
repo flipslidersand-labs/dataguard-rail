@@ -12,3 +12,7 @@ permissions:
 jobs:
   promote:
     uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@5f38244e9beed38126f1ef0f8bf868e671c0fba2 # qa-workflows#39 (squash merge)
+    with:
+      # linux-general (ARC) に gh CLI が無く exit 127 で失敗し続けるため GitHub-hosted に固定
+      # （dataguard-rail#178）。
+      runner: ubuntu-latest
