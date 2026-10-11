@@ -248,3 +248,8 @@ rules:
 - [ADR-002](docs/adr/ADR-002-petgraph-lineage.md): petgraph DiGraph for lineage / リネージュ
 - [ADR-003](docs/adr/ADR-003-exec-first-grpc-later.md): exec-first → gRPC in Phase 5
 - [ADR-004](docs/adr/ADR-004-go-ingestion-badgerdb.md): BadgerDB for violation persistence / violations 永続化
+
+
+## 設計判断 / Architecture decisions
+
+[ADR 一覧](docs/adr/README.md) — 設計判断、根拠資料、未決定事項。
