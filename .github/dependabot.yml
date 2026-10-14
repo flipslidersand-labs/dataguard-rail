@@ -1,0 +1,37 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "github-actions"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Go modules (go-ingestion)
+  - package-ecosystem: "gomod"
+    directory: "/go-ingestion"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "go"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Cargo (rust-engine)
+  - package-ecosystem: "cargo"
+    directory: "/rust-engine"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "rust"
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"

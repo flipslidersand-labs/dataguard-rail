@@ -10,6 +10,8 @@ import (
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 // fakeStore はテスト用の Storer 実装。
@@ -19,18 +21,34 @@ type fakeStore struct {
 	diffs      []store.SchemaDiff
 }
 
-func (f *fakeStore) ListViolations() ([]engine.Violation, error) { return f.violations, nil }
-func (f *fakeStore) CountViolations() (int, error)               { return len(f.violations), nil }
+func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
 func (f *fakeStore) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
-	all := f.violations
+	return pageViolations(f.violations, limit, offset), nil
+}
+func (f *fakeStore) CountViolationsByTable(table string) (int, error) {
+	return len(f.violationsByTable(table)), nil
+}
+func (f *fakeStore) ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error) {
+	return pageViolations(f.violationsByTable(table), limit, offset), nil
+}
+func (f *fakeStore) violationsByTable(table string) []engine.Violation {
+	matched := make([]engine.Violation, 0)
+	for _, v := range f.violations {
+		if v.Table == table {
+			matched = append(matched, v)
+		}
+	}
+	return matched
+}
+func pageViolations(all []engine.Violation, limit, offset int) []engine.Violation {
 	if offset >= len(all) {
-		return []engine.Violation{}, nil
+		return []engine.Violation{}
 	}
 	end := offset + limit
 	if limit <= 0 || end > len(all) {
 		end = len(all)
 	}
-	return all[offset:end], nil
+	return all[offset:end]
 }
 func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, nil }
 func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, nil }
@@ -43,7 +61,11 @@ func (f *fakeRunner) Analyze(_ context.Context, _ string) (json.RawMessage, erro
 }
 
 func newTestServer(st Storer, runner Runner) *Server {
-	return New(st, runner, nil)
+	return New(st, runner, nil, "", nil)
+}
+
+func newAuthedTestServer(st Storer, runner Runner, apiKey string) *Server {
+	return New(st, runner, nil, apiKey, nil)
 }
 
 func TestHealth(t *testing.T) {
@@ -152,6 +174,16 @@ func TestLineageMissingParam(t *testing.T) {
 	}
 }
 
+func TestLineageAbsolutePathRejected(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/lineage?sql=/etc/dataguard/secrets/internal.sql", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
 func TestLineageOK(t *testing.T) {
 	payload := json.RawMessage(`{"target":"t","sources":["s"],"has_cycle":false}`)
 	srv := newTestServer(&fakeStore{}, &fakeRunner{payload: payload})
@@ -199,6 +231,37 @@ func TestSchemaDiffTable(t *testing.T) {
 	}
 }
 
+// failingNotifier は常にエラーを返す alert.Notifier。
+type failingNotifier struct{ err error }
+
+func (f failingNotifier) Notify(_ context.Context, _ string) error { return f.err }
+
+// TestSchemaDiffLogsNotifyFailure は notifier.Notify が失敗した際、
+// handleSchemaDiff がそのエラーを握りつぶさずログに記録することを確認する（#108）。
+func TestSchemaDiffLogsNotifyFailure(t *testing.T) {
+	diff := &store.SchemaDiff{
+		Table: "products", DetectedAt: "2026-01-02T00:00:00Z",
+		Added: []store.ColumnDef{{Name: "discount", Type: "numeric"}},
+	}
+	notifyErr := fmt.Errorf("slack webhook: 429 too many requests")
+
+	core, logs := observer.New(zap.WarnLevel)
+	log := zap.New(core)
+
+	s := New(&fakeStore{diff: diff}, &fakeRunner{}, failingNotifier{err: notifyErr}, "", log)
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff?table=products", nil)
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+
+	entries := logs.FilterMessage("notify failed").All()
+	if len(entries) != 1 {
+		t.Fatalf("want 1 'notify failed' log entry, got %d: %+v", len(entries), logs.All())
+	}
+}
+
 func TestDashboard(t *testing.T) {
 	srv := newTestServer(&fakeStore{}, &fakeRunner{})
 	w := httptest.NewRecorder()
@@ -214,6 +277,50 @@ func TestDashboard(t *testing.T) {
 	body := w.Body.String()
 	if !containsAll(body, "DataGuard Rail", "/api/violations", "/api/schema-diff") {
 		t.Error("dashboard HTML missing expected content")
+	}
+}
+
+func TestAuthMissingToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	for _, path := range []string{"/", "/api/violations"} {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodGet, path, nil)
+		srv.Handler().ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: want 401, got %d", path, w.Code)
+		}
+	}
+}
+
+func TestAuthWrongToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", w.Code)
+	}
+}
+
+func TestAuthCorrectToken(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+}
+
+func TestAuthHealthAlwaysOpen(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
 	}
 }
 
