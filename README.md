@@ -94,6 +94,49 @@ dataguard ingest --grpc-addr localhost:50051 \
   --rules examples/rules.yaml
 ```
 
+> **Security / セキュリティ注意:** デフォルトはループバック (`[::1]`) バインドで
+> TLS 未対応の平文通信です。`--addr`/`--grpc-addr` を**ループバック外**に向ける場合、
+> TLS/mTLS（下記）または `--insecure`/`--grpc-insecure` の明示的な opt-in が
+> 無いと **起動/接続を拒否**します（中間者攻撃による `csv_path`/`sql_path` の
+> 書き換え、`violations_json` の改ざんを防ぐため）。
+
+#### TLS / mTLS でループバック外の Go↔Rust 通信を保護する
+
+証明書は自己署名 CA で発行できます（社内 CA を使う場合も手順は同様）。
+
+```bash
+# CA
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.crt \
+  -days 365 -subj "/CN=dataguard-ca"
+
+# Rust engine のサーバー証明書（bind するホスト名/IPを SAN に含める）
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr \
+  -subj "/CN=engine.internal" -addext "subjectAltName=DNS:engine.internal"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out server.crt -days 365 -copy_extensions copy
+
+# (mTLS を使う場合) Go 側のクライアント証明書
+openssl req -newkey rsa:2048 -nodes -keyout client.key -out client.csr \
+  -subj "/CN=go-ingestion"
+openssl x509 -req -in client.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out client.crt -days 365
+```
+
+```bash
+# 1. TLS（--tls-client-ca を付けると mTLS = クライアント証明書必須）
+dataguard-engine serve --addr engine.internal:50051 \
+  --tls-cert server.crt --tls-key server.key --tls-client-ca ca.crt
+
+# 2. Go 側は --grpc-tls-ca で検証、mTLS の場合は --grpc-tls-cert/--grpc-tls-key も指定
+dataguard ingest --grpc-addr engine.internal:50051 \
+  --grpc-tls-ca ca.crt --grpc-tls-cert client.crt --grpc-tls-key client.key \
+  --config examples/sources.yaml --rules examples/rules.yaml
+```
+
+ループバック限定運用で TLS が不要な場合は、既定のまま（`--tls-cert`/`--grpc-tls-ca`
+未指定）で従来通り平文で動作します。ループバック外でどうしても TLS を使わない場合のみ、
+`dataguard-engine serve --insecure` / `dataguard ingest --grpc-insecure` を明示的に指定してください。
+
 ### Daemon mode / スケジューラモード (`--daemon`)
 
 Add `schedule` to `sources.yaml` for cron-based execution.  
@@ -123,9 +166,19 @@ dataguard ingest --daemon \
 ### REST API + Web UI
 
 ```bash
-dataguard serve --addr :8080 --db data/violations
-# Open / ブラウザで http://localhost:8080/
+dataguard serve --addr :8080 --db data/violations --api-key "$(gopass show -o infra/dataguard-rail/api-key)"
+# Open / ブラウザで http://localhost:8080/ （Authorization: Bearer <api-key> が必要）
+curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/violations
 ```
+
+`--api-key` は必須。未指定のまま起動すると `serve` はエラーで終了する。
+意図的にローカル開発用途で無認証起動したい場合のみ `DATAGUARD_ALLOW_INSECURE=1` を設定する:
+
+```bash
+DATAGUARD_ALLOW_INSECURE=1 dataguard serve --addr :8080 --db data/violations
+```
+
+`/health` は監視用に常に認証不要。
 
 ### SQL Lineage Analysis / SQL リネージュ解析
 
@@ -207,3 +260,8 @@ rules:
 - [ADR-002](docs/adr/ADR-002-petgraph-lineage.md): petgraph DiGraph for lineage / リネージュ
 - [ADR-003](docs/adr/ADR-003-exec-first-grpc-later.md): exec-first → gRPC in Phase 5
 - [ADR-004](docs/adr/ADR-004-go-ingestion-badgerdb.md): BadgerDB for violation persistence / violations 永続化
+
+
+## 設計判断 / Architecture decisions
+
+[ADR 一覧](docs/adr/README.md) — 設計判断、根拠資料、未決定事項。

@@ -39,7 +39,16 @@ func TestHasJobsAfterRegister(t *testing.T) {
 	}
 }
 
+// TestScheduledJobFires は cron が実際に発火することを確認する。
+// GitHub Actions の共有ランナーは負荷変動が大きく tick 処理が遅延しうるため、
+// 必要なティック数（2回）に対して十分な余裕（8秒 = 500ms 間隔で最大16回分）を
+// 持たせ、CPU スロットリングによる偽陽性フレークを避ける（#93）。
+// 500ms という間隔自体も、より短い間隔（実測 100ms 等）は tick の取りこぼしで
+// 逆にフレークしやすいという経験則に基づく（既存の robfig/cron 運用実績）。
 func TestScheduledJobFires(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-time cron firing test in -short mode")
+	}
 	var count atomic.Int32
 	s := New(context.Background(), nil)
 	src := config.DataSource{Name: "x", Schedule: "@every 500ms"}
@@ -50,15 +59,133 @@ func TestScheduledJobFires(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	s.Start()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if count.Load() >= 2 {
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	s.Stop()
 	if count.Load() < 2 {
-		t.Errorf("expected >= 2 executions within 3s, got %d", count.Load())
+		t.Errorf("expected >= 2 executions within 8s, got %d", count.Load())
+	}
+}
+
+// TestOverlappingJobIsSkipped は、前回起動のジョブがスケジュール間隔より長くかかる場合に
+// 次のトリガーが並行実行されず（SkipIfStillRunning）、同時実行数が常に 1 以下であることを
+// 確認する（#90）。
+func TestOverlappingJobIsSkipped(t *testing.T) {
+	var running atomic.Int32
+	var maxConcurrent atomic.Int32
+	var starts atomic.Int32
+
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 200ms"}
+	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		starts.Add(1)
+		n := running.Add(1)
+		for {
+			old := maxConcurrent.Load()
+			if n <= old || maxConcurrent.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		time.Sleep(500 * time.Millisecond) // スケジュール間隔より長い
+		running.Add(-1)
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s.Start()
+
+	// 固定 sleep だと共有ランナーの負荷変動で tick が遅延した場合に
+	// 「starts が2未満のまま」偽陽性フレークする（#93と同種）。
+	// starts >= 2 になるまでポーリングし、十分なマージン（10秒）を持たせる。
+	deadline := time.Now().Add(10 * time.Second)
+	for starts.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	s.Stop()
+
+	if starts.Load() < 2 {
+		t.Fatalf("expected the job to have been triggered at least twice, got %d", starts.Load())
+	}
+	if maxConcurrent.Load() > 1 {
+		t.Errorf("expected max concurrent executions <= 1, got %d", maxConcurrent.Load())
+	}
+}
+
+// TestStopWaitsForRunningJob は Stop() が実行中ジョブの完了を待ってから
+// 戻ることを確認する（#91）。
+func TestStopWaitsForRunningJob(t *testing.T) {
+	var started, finished atomic.Bool
+
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 50ms"}
+	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		started.Store(true)
+		time.Sleep(300 * time.Millisecond)
+		finished.Store(true)
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s.Start()
+
+	// ジョブが実際に開始するまで待つ（固定 sleep だとティックの前に Stop してしまい
+	// 「ジョブが一度も走らないまま Stop が即座に返る」フレークになる）。
+	deadline := time.Now().Add(2 * time.Second)
+	for !started.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !started.Load() {
+		t.Fatal("job never started within 2s")
+	}
+
+	s.Stop()
+	if !finished.Load() {
+		t.Error("Stop() returned before the running job finished")
+	}
+}
+
+// TestStopTimesOutIfJobHangs は StopTimeout を超えるジョブに対し、Stop() が
+// 完了を待たずタイムアウトで戻ることを確認する（プロセス終了自体をブロックしないため）。
+func TestStopTimesOutIfJobHangs(t *testing.T) {
+	orig := StopTimeout
+	StopTimeout = 50 * time.Millisecond
+	defer func() { StopTimeout = orig }()
+
+	blockCtx, unblock := context.WithCancel(context.Background())
+	defer unblock()
+
+	var started atomic.Bool
+	s := New(context.Background(), nil)
+	src := config.DataSource{Name: "x", Schedule: "@every 20ms"}
+	if err := s.Register(src, func(_ context.Context, _ config.DataSource) error {
+		started.Store(true)
+		<-blockCtx.Done() // Stop がタイムアウトするまで戻らない
+		return nil
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	s.Start()
+
+	// 固定 sleep(50ms) だけでは、共有ランナーの負荷変動で tick が
+	// 50ms以内に発火しない場合ジョブが一度も開始されず、Stop()が即座に
+	// 返っても「意図した検証をしないまま偽陽性で成功」してしまう（#137）。
+	// ジョブが実際に開始したことをポーリングで確認してから Stop() を呼ぶ。
+	deadline := time.Now().Add(2 * time.Second)
+	for !started.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !started.Load() {
+		t.Fatal("job never started within 2s")
+	}
+
+	start := time.Now()
+	s.Stop()
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Errorf("Stop() should return promptly after StopTimeout, took %v", elapsed)
 	}
 }
