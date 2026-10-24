@@ -34,7 +34,43 @@ fn validate_path(path: &str, allowed_exts: &[&str]) -> Result<(), Status> {
     Ok(())
 }
 
-pub struct DataGuardService;
+/// 基準ディレクトリ配下に読み取り対象を限定する。
+///
+/// `validate_path`（相対パス・`..` 拒否・拡張子）を通した後、基準ディレクトリと結合して
+/// `canonicalize`（シンボリックリンク解決）し、解決後のパスが基準ディレクトリの配下に
+/// あることを確認する。範囲外・存在しないパスは拒否する。
+/// `base` は canonicalize 済みであること。
+#[allow(clippy::result_large_err)]
+fn resolve_in_base(
+    base: &std::path::Path,
+    path: &str,
+    allowed_exts: &[&str],
+) -> Result<std::path::PathBuf, Status> {
+    validate_path(path, allowed_exts)?;
+    let resolved = base
+        .join(path)
+        .canonicalize()
+        .map_err(|_| Status::invalid_argument(format!("無効なパスです: {path}")))?;
+    if !resolved.starts_with(base) {
+        return Err(Status::invalid_argument(format!("無効なパスです: {path}")));
+    }
+    Ok(resolved)
+}
+
+pub struct DataGuardService {
+    /// canonicalize 済みの基準ディレクトリ。RPC が読むファイルはこの配下に限る。
+    base_dir: std::path::PathBuf,
+}
+
+impl DataGuardService {
+    /// `base_dir` を canonicalize して保持する。存在しない場合はエラー。
+    pub fn new(base_dir: &std::path::Path) -> anyhow::Result<Self> {
+        let base_dir = base_dir
+            .canonicalize()
+            .with_context(|| format!("invalid --base-dir: {}", base_dir.display()))?;
+        Ok(Self { base_dir })
+    }
+}
 
 #[tonic::async_trait]
 impl DataGuard for DataGuardService {
@@ -43,13 +79,13 @@ impl DataGuard for DataGuardService {
         request: Request<AnalyzeRequest>,
     ) -> Result<Response<AnalyzeResponse>, Status> {
         let sql_path = request.into_inner().sql_path;
-        validate_path(&sql_path, &["sql"])?;
+        let sql_resolved = resolve_in_base(&self.base_dir, &sql_path, &["sql"])?;
 
         // ファイル読み込み・sqlparser解析は同期処理のため、tokioワーカースレッドを
         // 占有しないよう spawn_blocking の専用スレッドプールへ逃がす（#138）。
         #[allow(clippy::result_large_err)]
         let handle = tokio::task::spawn_blocking(move || -> Result<String, Status> {
-            let sql_text = std::fs::read_to_string(&sql_path)
+            let sql_text = std::fs::read_to_string(&sql_resolved)
                 .with_context(|| format!("cannot read {sql_path}"))
                 .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
@@ -79,16 +115,20 @@ impl DataGuard for DataGuardService {
         request: Request<CheckRequest>,
     ) -> Result<Response<CheckResponse>, Status> {
         let req = request.into_inner();
-        validate_path(&req.csv_path, &["csv"])?;
-        validate_path(&req.rules_path, &["yaml", "yml"])?;
+        let csv_resolved = resolve_in_base(&self.base_dir, &req.csv_path, &["csv"])?;
+        let rules_resolved = resolve_in_base(&self.base_dir, &req.rules_path, &["yaml", "yml"])?;
         let detected_at = chrono::Utc::now().to_rfc3339();
 
         // check_file は最大10万行の同期パース・正規表現評価・集計を行うため、
         // analyze と同様に spawn_blocking + サーバー側タイムアウトで保護する（#138）。
         #[allow(clippy::result_large_err)]
         let handle = tokio::task::spawn_blocking(move || -> Result<String, Status> {
-            let violations = check::check_file(&req.csv_path, &req.rules_path, &detected_at)
-                .map_err(|e| Status::internal(e.to_string()))?;
+            let violations = check::check_file(
+                &csv_resolved.to_string_lossy(),
+                &rules_resolved.to_string_lossy(),
+                &detected_at,
+            )
+            .map_err(|e| Status::internal(e.to_string()))?;
 
             serde_json::to_string(&violations).map_err(|e| Status::internal(e.to_string()))
         });
@@ -135,5 +175,78 @@ mod tests {
         assert!(validate_path("data/input.txt", &["csv"]).is_err());
         assert!(validate_path("rules.json", &["yaml", "yml"]).is_err());
         assert!(validate_path("no_extension", &["csv"]).is_err());
+    }
+
+    fn base_with_files() -> (tempfile::TempDir, tempfile::TempDir) {
+        let base = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir(base.path().join("sub")).unwrap();
+        std::fs::write(base.path().join("sub/ok.sql"), "SELECT 1").unwrap();
+        std::fs::write(outside.path().join("secret.sql"), "SELECT 2").unwrap();
+        (base, outside)
+    }
+
+    #[test]
+    fn resolve_in_base_accepts_file_under_base() {
+        let (base, _outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        let got = resolve_in_base(&base_canon, "sub/ok.sql", &["sql"]).unwrap();
+        assert!(got.starts_with(&base_canon));
+    }
+
+    #[test]
+    fn resolve_in_base_rejects_missing_file() {
+        let (base, _outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        assert!(resolve_in_base(&base_canon, "sub/none.sql", &["sql"]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_in_base_rejects_symlink_file_escaping_base() {
+        let (base, outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.sql"),
+            base.path().join("link.sql"),
+        )
+        .unwrap();
+        assert!(resolve_in_base(&base_canon, "link.sql", &["sql"]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_in_base_rejects_symlinked_dir_escaping_base() {
+        let (base, outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        std::os::unix::fs::symlink(outside.path(), base.path().join("linkdir")).unwrap();
+        assert!(resolve_in_base(&base_canon, "linkdir/secret.sql", &["sql"]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_in_base_allows_symlink_that_stays_inside_base() {
+        let (base, _outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        std::os::unix::fs::symlink(
+            base.path().join("sub/ok.sql"),
+            base.path().join("alias.sql"),
+        )
+        .unwrap();
+        assert!(resolve_in_base(&base_canon, "alias.sql", &["sql"]).is_ok());
+    }
+
+    #[test]
+    fn resolve_in_base_keeps_absolute_and_parent_dir_rejection() {
+        let (base, outside) = base_with_files();
+        let base_canon = base.path().canonicalize().unwrap();
+        let abs = outside.path().join("secret.sql");
+        assert!(resolve_in_base(&base_canon, abs.to_str().unwrap(), &["sql"]).is_err());
+        assert!(resolve_in_base(&base_canon, "sub/../sub/ok.sql", &["sql"]).is_err());
+    }
+
+    #[test]
+    fn service_new_rejects_missing_base_dir() {
+        assert!(DataGuardService::new(std::path::Path::new("/nonexistent-base-dir-xyz")).is_err());
     }
 }
