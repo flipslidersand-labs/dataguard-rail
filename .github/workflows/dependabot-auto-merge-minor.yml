@@ -3,7 +3,12 @@ name: Dependabot Auto-merge (minor, 24h wait)
 on:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "true ならマージ・ラベル変更をせず、判定だけをログに出す"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -11,4 +16,6 @@ permissions:
 
 jobs:
   promote:
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@5f38244e9beed38126f1ef0f8bf868e671c0fba2 # qa-workflows#39 (squash merge)
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge-minor.yml@2ca417cdbd9c5cea1919b894efff4b6cb5198d74 # qa-workflows#108 (自動マージの判断を promoter に集約, #106)
+    with:
+      dry-run: ${{ inputs.dry-run || false }}
