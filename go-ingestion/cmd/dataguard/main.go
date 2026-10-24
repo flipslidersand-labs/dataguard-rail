@@ -10,9 +10,9 @@ import (
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/scheduler"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
+	"github.com/flipslidersand/dataguard-rail/internal/scheduler"
 	"github.com/flipslidersand/dataguard-rail/internal/server"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
@@ -28,7 +28,8 @@ func main() {
 	}
 	// グローバルフラグ: OTel / Slack
 	root.PersistentFlags().String("otel-endpoint", "", "OTel OTLP エンドポイント（空=stdout）")
-	root.PersistentFlags().String("slack-webhook", "", "Slack Incoming Webhook URL（空=通知なし）")
+	root.PersistentFlags().String("slack-webhook", "", "Slack Incoming Webhook URL（空=通知なし。引数で渡すとプロセス一覧に見えるため --slack-webhook-file か環境変数 "+envSlackWebhook+" を推奨）")
+	root.PersistentFlags().String("slack-webhook-file", "", "Slack Incoming Webhook URL を記載したファイル")
 	root.AddCommand(newIngestCmd(), newServeCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -42,6 +43,15 @@ func addGrpcTLSFlags(f *pflag.FlagSet, tlsCfg *engine.GrpcTLSConfig) {
 	f.StringVar(&tlsCfg.CertFile, "grpc-tls-cert", "", "mTLS 用クライアント証明書 (PEM、--grpc-tls-key と併用)")
 	f.StringVar(&tlsCfg.KeyFile, "grpc-tls-key", "", "mTLS 用クライアント秘密鍵 (PEM、--grpc-tls-cert と併用)")
 	f.BoolVar(&tlsCfg.Insecure, "grpc-insecure", false, "ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）")
+}
+
+// resolveSlackWebhook は --slack-webhook / --slack-webhook-file / 環境変数から Webhook URL を解決する。
+func resolveSlackWebhook(cmd *cobra.Command) (string, error) {
+	arg, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
+	file, _ := cmd.Root().PersistentFlags().GetString("slack-webhook-file")
+	log, _ := zap.NewProduction()
+	defer func() { _ = log.Sync() }()
+	return resolveSecret(log, "slack-webhook", arg, file, os.Getenv(envSlackWebhook))
 }
 
 func newIngestCmd() *cobra.Command {
@@ -70,7 +80,10 @@ func newIngestCmd() *cobra.Command {
   dataguard ingest --config sources.yaml --rules rules.yaml --grpc-addr localhost:50051`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
-			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
+			slackWebhook, err := resolveSlackWebhook(cmd)
+			if err != nil {
+				return err
+			}
 			if daemon {
 				return runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelEndpoint, slackWebhook, grpcTLS)
 			}
@@ -231,14 +244,20 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	return nil
 }
 
+// defaultServeAddr は REST の既定リッスンアドレス。ループバックのみ。
+const defaultServeAddr = "127.0.0.1:8080"
+
 func newServeCmd() *cobra.Command {
 	var (
-		addr      string
-		dbPath    string
-		engineBin string
-		grpcAddr  string
-		apiKey    string
-		grpcTLS   engine.GrpcTLSConfig
+		addr       string
+		dbPath     string
+		engineBin  string
+		grpcAddr   string
+		apiKey     string
+		apiKeyFile string
+		tlsCert    string
+		tlsKey     string
+		grpcTLS    engine.GrpcTLSConfig
 	)
 	cmd := &cobra.Command{
 		Use:   "serve",
@@ -247,22 +266,40 @@ func newServeCmd() *cobra.Command {
 （GET /）を起動する。バックエンドの解析は --grpc-addr 指定時は常駐 gRPC サーバー、
 未指定時は engine バイナリの都度 exec で行う。
 
---api-key は必須。未指定のまま起動すると（環境変数 DATAGUARD_ALLOW_INSECURE=1 を
-明示しない限り）起動を拒否する — /api と / の無認証公開を防ぐため。`,
-		Example: `  dataguard serve --addr :8080 --api-key "$(gopass show -o infra/dataguard-rail/api-key)"
-  dataguard serve --addr :8080 --grpc-addr localhost:50051 --api-key "$API_KEY"`,
+API キーは --api-key-file(推奨)または環境変数 DATAGUARD_API_KEY で渡す。--api-key
+（引数）はプロセス一覧に見えるため非推奨で、使うと警告を出す。キーが無いまま起動すると
+（環境変数 DATAGUARD_ALLOW_INSECURE=1 を明示しない限り）起動を拒否する — /api の無認証公開を防ぐため。
+
+--addr の既定は 127.0.0.1:8080（ループバックのみ）。ループバック外にバインドする場合は
+--tls-cert / --tls-key で TLS を有効にするか、平文公開を意図する場合のみ
+DATAGUARD_ALLOW_INSECURE=1 を設定する。`,
+		Example: `  dataguard serve --api-key-file /etc/dataguard/api-key
+  DATAGUARD_API_KEY=... dataguard serve --grpc-addr localhost:50051
+  dataguard serve --addr 0.0.0.0:8443 --tls-cert server.crt --tls-key server.key --api-key-file /etc/dataguard/api-key`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
-			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
-			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, grpcTLS)
+			slackWebhook, err := resolveSlackWebhook(cmd)
+			if err != nil {
+				return err
+			}
+			warnLog, _ := zap.NewProduction()
+			defer func() { _ = warnLog.Sync() }()
+			key, err := resolveSecret(warnLog, "api-key", apiKey, apiKeyFile, os.Getenv(envAPIKey))
+			if err != nil {
+				return err
+			}
+			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, key, tlsCert, tlsKey, grpcTLS)
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&addr, "addr", ":8080", "リッスンアドレス")
+	f.StringVar(&addr, "addr", defaultServeAddr, "リッスンアドレス（ループバック外は TLS か DATAGUARD_ALLOW_INSECURE=1 が必要）")
 	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
 	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
-	f.StringVar(&apiKey, "api-key", "", "API 認証キー（未指定=認証無効。本番運用では必須）")
+	f.StringVar(&apiKey, "api-key", "", "API 認証キー（非推奨: 引数はプロセス一覧に見える。--api-key-file か環境変数 "+envAPIKey+" を使う）")
+	f.StringVar(&apiKeyFile, "api-key-file", "", "API 認証キーを記載したファイル")
+	f.StringVar(&tlsCert, "tls-cert", "", "REST の TLS サーバー証明書 (PEM、--tls-key と併用)")
+	f.StringVar(&tlsKey, "tls-key", "", "REST の TLS サーバー秘密鍵 (PEM、--tls-cert と併用)")
 	addGrpcTLSFlags(f, &grpcTLS)
 	return cmd
 }
@@ -282,12 +319,18 @@ func checkAPIKeyRequirement(apiKey, allowInsecureEnv string) error {
 	return nil
 }
 
-func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string, grpcTLS engine.GrpcTLSConfig) error {
+func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, tlsCert, tlsKey string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
 
-	if err := checkAPIKeyRequirement(apiKey, os.Getenv("DATAGUARD_ALLOW_INSECURE")); err != nil {
+	if err := checkListenPolicy(addr, tlsCert, tlsKey, os.Getenv(envAllowInsecure)); err != nil {
+		return err
+	}
+	if tlsCert == "" && !engine.IsLoopbackAddr(addr) {
+		log.Warn("ループバック外に TLS なし(平文)で公開します。DATAGUARD_ALLOW_INSECURE=1 が指定されています", zap.String("addr", addr))
+	}
+	if err := checkAPIKeyRequirement(apiKey, os.Getenv(envAllowInsecure)); err != nil {
 		return err
 	}
 	if apiKey == "" {
@@ -322,6 +365,9 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 	notifier := alert.NewSlack(slackWebhook)
 	srv := server.New(st, runner, notifier, apiKey, log)
 
-	log.Info("starting server", zap.String("addr", addr))
+	log.Info("starting server", zap.String("addr", addr), zap.Bool("tls", tlsCert != ""))
+	if tlsCert != "" {
+		return srv.RunTLS(addr, tlsCert, tlsKey)
+	}
 	return srv.Run(addr)
 }
