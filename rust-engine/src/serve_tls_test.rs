@@ -190,10 +190,92 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_non_loopback_bind_without_tls_or_insecure() {
-        let err = run_serve("0.0.0.0:0".to_string(), None, None, None, false)
-            .await
-            .expect_err("expected refusal for plaintext non-loopback bind");
+        let err = run_serve(
+            "0.0.0.0:0".to_string(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            ".".to_string(),
+        )
+        .await
+        .expect_err("expected refusal for plaintext non-loopback bind");
         assert!(err.to_string().contains("refusing to bind"));
+    }
+
+    #[tokio::test]
+    async fn refuses_non_loopback_tls_without_client_ca() {
+        // ポリシー判定はファイルを読む前に行われるため、証明書ファイルは存在しなくてよい。
+        let err = run_serve(
+            "0.0.0.0:0".to_string(),
+            Some("/nonexistent/server.crt".to_string()),
+            Some("/nonexistent/server.key".to_string()),
+            None,
+            false,
+            false,
+            ".".to_string(),
+        )
+        .await
+        .expect_err("expected refusal for non-loopback TLS without client CA");
+        assert!(
+            err.to_string().contains("--tls-client-ca"),
+            "error should explain the mTLS requirement: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_loopback_bind_starts_with_client_ca_and_with_explicit_opt_out() {
+        if !openssl_available() {
+            eprintln!("skipping: openssl not found in PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let (ca_crt, srv_crt, srv_key, _cli_crt, _cli_key) = gen_certs(dir.path());
+
+        // mTLS（client CA あり）→ 起動できる（エラーで終了しない）
+        let server = tokio::spawn(run_serve(
+            format!("0.0.0.0:{}", free_port()),
+            Some(srv_crt.clone()),
+            Some(srv_key.clone()),
+            Some(ca_crt),
+            false,
+            false,
+            ".".to_string(),
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!server.is_finished(), "mTLS non-loopback should start");
+        server.abort();
+
+        // client CA なし + 明示フラグ → 起動できる
+        let server = tokio::spawn(run_serve(
+            format!("0.0.0.0:{}", free_port()),
+            Some(srv_crt),
+            Some(srv_key),
+            None,
+            false,
+            true,
+            ".".to_string(),
+        ));
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!server.is_finished(), "explicit opt-out should start");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn refuses_missing_base_dir() {
+        let err = run_serve(
+            "127.0.0.1:0".to_string(),
+            None,
+            None,
+            None,
+            false,
+            false,
+            "/nonexistent-base-dir-xyz".to_string(),
+        )
+        .await
+        .expect_err("expected refusal for missing --base-dir");
+        assert!(err.to_string().contains("--base-dir"));
     }
 
     #[tokio::test]
@@ -212,6 +294,8 @@ mod tests {
             None,
             Some(ca_path.to_str().unwrap().to_string()),
             false,
+            false,
+            ".".to_string(),
         )
         .await
         .expect_err("expected refusal when --tls-client-ca is given without --tls-cert/--tls-key");
@@ -239,6 +323,8 @@ mod tests {
             Some(srv_key),
             Some(ca_crt.clone()),
             false,
+            false,
+            ".".to_string(),
         ));
         // サーバーの起動を待つ
         tokio::time::sleep(Duration::from_millis(300)).await;
