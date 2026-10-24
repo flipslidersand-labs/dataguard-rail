@@ -282,13 +282,48 @@ func TestDashboard(t *testing.T) {
 
 func TestAuthMissingToken(t *testing.T) {
 	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
-	for _, path := range []string{"/", "/api/violations"} {
+	for _, path := range []string{"/api/violations", "/api/schema-diff", "/api/lineage?sql=a.sql"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, path, nil)
 		srv.Handler().ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: want 401, got %d", path, w.Code)
 		}
+	}
+}
+
+// ダッシュボードの HTML は静的でデータを含まないため、API キー設定時もキー入力欄を
+// 表示できるよう認証なしで配信する。データは認証付きの /api からのみ取得される。
+func TestDashboardHTMLServedWithoutKeyAndCarriesNoData(t *testing.T) {
+	st := &fakeStore{violations: []engine.Violation{{ID: "v-secret-marker", Table: "t", Rule: "r"}}}
+	srv := newAuthedTestServer(st, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if containsAll(w.Body.String(), "v-secret-marker") {
+		t.Error("dashboard HTML must not embed stored data")
+	}
+}
+
+func TestDashboardHasKeyInputAndSendsBearerInMemoryOnly(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	srv.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	if !containsAll(body, `id="api-key"`, `type="password"`, "'Authorization': 'Bearer ' + apiKey", "apiFetch('/api/violations')", "apiFetch('/api/schema-diff')") {
+		t.Error("dashboard must provide a key input and send it as Authorization: Bearer on fetch")
+	}
+	for _, banned := range []string{"localStorage", "sessionStorage", "document.cookie"} {
+		if containsAll(body, banned) {
+			t.Errorf("API key must stay in memory only, found %q", banned)
+		}
+	}
+	if !containsAll(body, "function esc(s)", "${esc(v.rule)}") {
+		t.Error("esc() based escaping must be preserved")
 	}
 }
 
