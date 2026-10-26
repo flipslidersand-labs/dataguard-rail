@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -109,5 +110,19 @@ func TestEffectiveQueryTimeoutNegativeFallsBackToDefault(t *testing.T) {
 	d := &DataSource{QueryTimeout: -5 * time.Second}
 	if got := d.EffectiveQueryTimeout(); got != DefaultQueryTimeout {
 		t.Errorf("負値は DefaultQueryTimeout にフォールバックするはず: got %v", got)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	const path = "/nonexistent/sources.yaml"
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("存在しないパスでエラーが返るべき")
+	}
+	if !strings.Contains(err.Error(), "read config") {
+		t.Errorf("エラーに %q が含まれるべき: %v", "read config", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("エラーにパス %q が含まれるべき: %v", path, err)
 	}
 }
