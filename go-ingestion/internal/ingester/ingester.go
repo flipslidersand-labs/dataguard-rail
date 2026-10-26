@@ -89,6 +89,7 @@ func LoadJSONL(path string) (*Dataset, error) {
 	var headers []string
 	var headerIdx map[string]int
 	var rows [][]string
+	emptyLead := 0 // ヘッダ確定前に現れた `{}` 行の数(確定後に空行として補う)
 	lineNo := 0
 
 	for scanner.Scan() {
@@ -103,6 +104,18 @@ func LoadJSONL(path string) (*Dataset, error) {
 			headers, headerIdx, err = jsonlHeaders(line)
 			if err != nil {
 				return nil, fmt.Errorf("jsonl %q line %d: %w", path, lineNo, err)
+			}
+			if len(headers) == 0 {
+				// `{}` 行ではヘッダを確定できない。キーを持つ行が出るまで保留する。
+				headers, headerIdx = nil, nil
+				emptyLead++
+				if emptyLead > MaxJSONLRows {
+					return nil, fmt.Errorf("jsonl %q: 行数が上限 %d を超えました", path, MaxJSONLRows)
+				}
+				continue
+			}
+			for i := 0; i < emptyLead; i++ {
+				rows = append(rows, make([]string, len(headers)))
 			}
 		}
 
