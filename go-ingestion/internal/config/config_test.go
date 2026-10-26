@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func writeTemp(t *testing.T, content string) string {
@@ -84,5 +85,29 @@ sources:
 `)
 	if _, err := Load(p); err != nil {
 		t.Fatalf("empty schedule should not error: %v", err)
+	}
+}
+
+func TestEffectiveQueryTimeoutDefault(t *testing.T) {
+	d := &DataSource{}
+	if got := d.EffectiveQueryTimeout(); got != DefaultQueryTimeout {
+		t.Errorf("未設定時は DefaultQueryTimeout(%v) のはず: got %v", DefaultQueryTimeout, got)
+	}
+	if DefaultQueryTimeout != 30*time.Second {
+		t.Errorf("DefaultQueryTimeout は 30s のはず: got %v", DefaultQueryTimeout)
+	}
+}
+
+func TestEffectiveQueryTimeoutOverride(t *testing.T) {
+	d := &DataSource{QueryTimeout: 10 * time.Second}
+	if got := d.EffectiveQueryTimeout(); got != 10*time.Second {
+		t.Errorf("want 10s, got %v", got)
+	}
+}
+
+func TestEffectiveQueryTimeoutNegativeFallsBackToDefault(t *testing.T) {
+	d := &DataSource{QueryTimeout: -5 * time.Second}
+	if got := d.EffectiveQueryTimeout(); got != DefaultQueryTimeout {
+		t.Errorf("負値は DefaultQueryTimeout にフォールバックするはず: got %v", got)
 	}
 }
