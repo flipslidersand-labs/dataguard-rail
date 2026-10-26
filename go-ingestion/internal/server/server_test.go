@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,9 +17,11 @@ import (
 
 // fakeStore はテスト用の Storer 実装。
 type fakeStore struct {
-	violations []engine.Violation
-	diff       *store.SchemaDiff
-	diffs      []store.SchemaDiff
+	violations   []engine.Violation
+	diff         *store.SchemaDiff
+	diffs        []store.SchemaDiff
+	diffErr      error
+	listDiffsErr error
 }
 
 func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
@@ -50,8 +53,8 @@ func pageViolations(all []engine.Violation, limit, offset int) []engine.Violatio
 	}
 	return all[offset:end]
 }
-func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, nil }
-func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, nil }
+func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, f.diffErr }
+func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, f.listDiffsErr }
 
 // fakeRunner はテスト用の Runner 実装。
 type fakeRunner struct{ payload json.RawMessage }
@@ -338,4 +341,34 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestSchemaDiffTableStoreError(t *testing.T) {
+	srv := newTestServer(&fakeStore{diffErr: errors.New("boom latest")}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff?table=users", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", w.Code)
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "boom latest" {
+		t.Errorf("unexpected error body: %s", w.Body.String())
+	}
+}
+
+func TestSchemaDiffAllStoreError(t *testing.T) {
+	srv := newTestServer(&fakeStore{listDiffsErr: errors.New("boom list")}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", w.Code)
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "boom list" {
+		t.Errorf("unexpected error body: %s", w.Body.String())
+	}
 }
