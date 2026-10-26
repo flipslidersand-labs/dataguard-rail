@@ -136,4 +136,113 @@ mod tests {
         assert!(validate_path("rules.json", &["yaml", "yml"]).is_err());
         assert!(validate_path("no_extension", &["csv"]).is_err());
     }
+
+    /// validate_path は相対パスのみ許可するため、cwd (rust-engine/) 配下に一時ディレクトリを作る。
+    fn rel_tempdir() -> tempfile::TempDir {
+        tempfile::tempdir_in(".").unwrap()
+    }
+
+    fn rel_path(dir: &tempfile::TempDir, name: &str, content: &str) -> String {
+        std::fs::write(dir.path().join(name), content).unwrap();
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        format!("{dir_name}/{name}")
+    }
+
+    #[tokio::test]
+    async fn analyze_returns_lineage_json_for_valid_sql() {
+        let dir = rel_tempdir();
+        let sql_path = rel_path(&dir, "q.sql", "INSERT INTO dst SELECT id FROM src;");
+        let resp = DataGuardService
+            .analyze(Request::new(AnalyzeRequest { sql_path }))
+            .await
+            .expect("analyze should succeed");
+        let v: serde_json::Value = serde_json::from_str(&resp.into_inner().lineage_json).unwrap();
+        let tables: Vec<&str> = v["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap())
+            .collect();
+        assert!(tables.contains(&"src") && tables.contains(&"dst"), "{v}");
+        assert!(!v["edges"].as_array().unwrap().is_empty(), "{v}");
+    }
+
+    #[tokio::test]
+    async fn analyze_missing_file_is_invalid_argument() {
+        let dir = rel_tempdir();
+        let dir_name = dir.path().file_name().unwrap().to_str().unwrap();
+        let err = DataGuardService
+            .analyze(Request::new(AnalyzeRequest {
+                sql_path: format!("{dir_name}/missing.sql"),
+            }))
+            .await
+            .expect_err("missing file should fail");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn analyze_invalid_sql_is_internal() {
+        let dir = rel_tempdir();
+        let sql_path = rel_path(&dir, "bad.sql", "SELEC FROM WHERE ;;(");
+        let err = DataGuardService
+            .analyze(Request::new(AnalyzeRequest { sql_path }))
+            .await
+            .expect_err("invalid SQL should fail");
+        assert_eq!(err.code(), tonic::Code::Internal);
+    }
+
+    #[tokio::test]
+    async fn check_returns_violations_json_for_valid_inputs() {
+        let dir = rel_tempdir();
+        let csv_path = rel_path(&dir, "d.csv", "sale_price\n100\n-5\n");
+        let rules_path = rel_path(
+            &dir,
+            "r.yaml",
+            "rules:\n  - name: positive_price\n    column: sale_price\n    expression: \"value > 0\"\n",
+        );
+        let resp = DataGuardService
+            .check(Request::new(CheckRequest {
+                csv_path,
+                rules_path,
+            }))
+            .await
+            .expect("check should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&resp.into_inner().violations_json).unwrap();
+        let arr = v.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "{v}");
+        assert_eq!(arr[0]["rule"], "positive_price");
+        assert_eq!(arr[0]["value"], "-5");
+    }
+
+    #[tokio::test]
+    async fn check_with_invalid_rule_is_internal() {
+        let dir = rel_tempdir();
+        let csv_path = rel_path(&dir, "d.csv", "x\n1\n");
+        let rules_path = rel_path(
+            &dir,
+            "r.yaml",
+            "rules:\n  - name: bad\n    column: x\n    expression: \"value ~= 1\"\n",
+        );
+        let err = DataGuardService
+            .check(Request::new(CheckRequest {
+                csv_path,
+                rules_path,
+            }))
+            .await
+            .expect_err("invalid rule should fail");
+        assert_eq!(err.code(), tonic::Code::Internal);
+    }
+
+    #[tokio::test]
+    async fn check_rejects_invalid_paths_before_io() {
+        let err = DataGuardService
+            .check(Request::new(CheckRequest {
+                csv_path: "../x.csv".into(),
+                rules_path: "r.yaml".into(),
+            }))
+            .await
+            .expect_err("traversal should be rejected");
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
 }

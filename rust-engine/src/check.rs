@@ -569,4 +569,59 @@ mod tests {
         let rules = vec![raw("r", Some("x"), None, "matches noSlash")];
         assert!(evaluate(&headers, &records, &rules, "t", "T").is_err());
     }
+
+    /// 単一ルールを evaluate に通し、Err であること・メッセージにルール名が含まれることを確認する。
+    fn assert_compile_error(rule: RawRule, expected_fragment: &str) {
+        let headers = vec!["x".to_string(), "k".to_string()];
+        let records = rows(&[&["1", "a"]]);
+        let name = rule.name.clone();
+        let err =
+            evaluate(&headers, &records, &[rule], "t", "T").expect_err("expected compile error");
+        let msg = format!("{err:#}");
+        assert!(msg.contains(&name), "rule name missing: {msg}");
+        assert!(
+            msg.contains(expected_fragment),
+            "expected `{expected_fragment}` in: {msg}"
+        );
+    }
+
+    #[test]
+    fn unsupported_operator_errors() {
+        assert_compile_error(
+            raw("bad_op", Some("x"), None, "value ~= 1"),
+            "未対応の演算子",
+        );
+    }
+
+    #[test]
+    fn non_numeric_rhs_errors() {
+        assert_compile_error(
+            raw("bad_rhs", Some("x"), None, "value > abc"),
+            "右辺が数値でない",
+        );
+    }
+
+    #[test]
+    fn not_null_missing_column_errors() {
+        assert_compile_error(
+            raw("nn", None, None, "not_null"),
+            "not_null は column が必須",
+        );
+    }
+
+    #[test]
+    fn count_missing_key_errors() {
+        assert_compile_error(
+            raw("cnt", None, None, "count <= 1"),
+            "count 式は key が必須",
+        );
+    }
+
+    #[test]
+    fn unsupported_expression_errors() {
+        assert_compile_error(
+            raw("weird", Some("x"), None, "something else"),
+            "未対応の式",
+        );
+    }
 }
