@@ -194,3 +194,38 @@ func TestWriteTempCSVRoundTrip(t *testing.T) {
 		t.Error("cleanup should remove temp file")
 	}
 }
+
+// `{}` 行(全フィールド null/欠損の出力)でヘッダ検出が壊れ、列数が不整合になる回帰。
+func TestLoadJSONLEmptyObjectLines(t *testing.T) {
+	cases := map[string]string{
+		"leading":  "{}\n{\"a\":1,\"b\":2}\n{\"a\":3,\"b\":4}\n",
+		"middle":   "{\"a\":1,\"b\":2}\n{}\n{\"a\":3,\"b\":4}\n",
+		"multiple": "{}\n{}\n{\"a\":1,\"b\":2}\n{\"a\":3,\"b\":4}\n",
+	}
+	wantRows := map[string]int{"leading": 3, "middle": 3, "multiple": 4}
+	for name, src := range cases {
+		t.Run(name, func(t *testing.T) {
+			ds, err := LoadJSONL(writeJSONL(t, src))
+			if err != nil {
+				t.Fatalf("LoadJSONL: %v", err)
+			}
+			if got := strings.Join(ds.Headers, ","); got != "a,b" {
+				t.Fatalf("headers = %q, want a,b", got)
+			}
+			if len(ds.Rows) != wantRows[name] {
+				t.Fatalf("rows = %d, want %d", len(ds.Rows), wantRows[name])
+			}
+			for i, r := range ds.Rows {
+				if len(r) != 2 {
+					t.Errorf("row %d width = %d, want 2", i, len(r))
+				}
+			}
+		})
+	}
+}
+
+func TestLoadJSONLOnlyEmptyObjects(t *testing.T) {
+	if _, err := LoadJSONL(writeJSONL(t, "{}\n{}\n")); err == nil {
+		t.Fatal("expected error for file with only {} lines")
+	}
+}

@@ -12,6 +12,7 @@ Real-time data quality checking and column lineage tracking platform (Rust engin
 | CSV Quality Rules / CSV 品質ルール評価 | `not_null` / comparison / unique / regex constraints via `rules.yaml` / `rules.yaml` で定義 |
 | Data Profiling / データプロファイリング | Auto-computes min / max / mean / null_rate / unique_count per column / カラムごとに自動算出 |
 | Data Ingestion / データ取込み | CSV / JSONL / PostgreSQL → violations stored in BadgerDB |
+| Scheduled Ingestion / 定期実行 | cron-based periodic ingestion via `schedule` + `--daemon` (robfig/cron) / `schedule` と `--daemon` で cron 定期取込み |
 | REST API + Web UI | Dashboard + violations / lineage / schema-diff endpoints |
 | gRPC Integration / gRPC 統合 | Go ↔ Rust via tonic gRPC (`--grpc-addr`) |
 | OTel + Alerts / OTel + アラート | violations.total metric / Trace spans / Slack Webhook |
@@ -42,6 +43,7 @@ dataguard-rail/
 │       ├── ingester/           # CSV / JSONL / PostgreSQL ingestion / 取込み
 │       ├── engine/             # Rust engine invocation / Rust engine 呼び出し
 │       ├── pipeline/           # ingest flow / ingest フロー
+│       ├── scheduler/          # cron scheduler (--daemon) / cron スケジューラ
 │       ├── store/              # BadgerDB persistence / BadgerDB 永続化
 │       ├── server/             # gin REST API + Web UI dashboard
 │       ├── telemetry/          # OTel init + metrics / OTel 初期化・メトリクス
