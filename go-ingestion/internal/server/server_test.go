@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
@@ -209,7 +211,12 @@ func TestLineageAbsolutePathRejected(t *testing.T) {
 
 func TestLineageOK(t *testing.T) {
 	payload := json.RawMessage(`{"target":"t","sources":["s"],"has_cycle":false}`)
-	srv := newTestServer(&fakeStore{}, &fakeRunner{payload: payload})
+	// /api/lineage は基準ディレクトリ(--sql-dir)配下に実在する .sql だけを受け付ける。
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.sql"), []byte("SELECT 1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakeStore{}, &fakeRunner{payload: payload}, nil, "", nil, WithSQLDir(dir))
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/lineage?sql=x.sql", nil)
 	srv.Handler().ServeHTTP(w, req)
@@ -373,7 +380,7 @@ func TestSchemaDiffTableStoreError(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["error"] != "boom latest" {
+	if body["error"] != "内部エラーが発生しました" {
 		t.Errorf("unexpected error body: %s", w.Body.String())
 	}
 }
@@ -388,7 +395,7 @@ func TestSchemaDiffAllStoreError(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["error"] != "boom list" {
+	if body["error"] != "内部エラーが発生しました" {
 		t.Errorf("unexpected error body: %s", w.Body.String())
 	}
 }
