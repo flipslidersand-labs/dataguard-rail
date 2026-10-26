@@ -380,7 +380,7 @@ func TestSchemaDiffTableStoreError(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["error"] != "boom latest" {
+	if body["error"] != "内部エラーが発生しました" {
 		t.Errorf("unexpected error body: %s", w.Body.String())
 	}
 }
@@ -395,7 +395,7 @@ func TestSchemaDiffAllStoreError(t *testing.T) {
 	}
 	var body map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["error"] != "boom list" {
+	if body["error"] != "内部エラーが発生しました" {
 		t.Errorf("unexpected error body: %s", w.Body.String())
 	}
 }
