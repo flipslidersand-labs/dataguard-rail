@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,19 @@ sources:
 `)
 	if _, err := Load(p); err != nil {
 		t.Fatalf("empty schedule should not error: %v", err)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	const path = "/nonexistent/sources.yaml"
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("存在しないパスでエラーが返るべき")
+	}
+	if !strings.Contains(err.Error(), "read config") {
+		t.Errorf("エラーに %q が含まれるべき: %v", "read config", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("エラーにパス %q が含まれるべき: %v", path, err)
 	}
 }
