@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -83,5 +84,53 @@ func TestAnalyzeRejectsRelativeBin(t *testing.T) {
 	r := &Runner{Bin: "dataguard-engine"}
 	if _, err := r.Analyze(context.Background(), "schema.sql"); err == nil {
 		t.Error("expected error when Bin is not an absolute path")
+	}
+}
+
+// argsEchoBin は受け取った引数と作業ディレクトリを JSON で出力する実行可能スクリプトを作る。
+func argsEchoBin(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "echo-engine")
+	script := "#!/bin/sh\nprintf '{\"argc\":%s,\"arg1\":\"%s\",\"arg2\":\"%s\",\"pwd\":\"%s\"}' \"$#\" \"$2\" \"$3\" \"$(pwd -P)\"\n"
+	if err := os.WriteFile(p, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestAnalyzePassesPathAsSingleSqlFileArgInSQLDir(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := New(argsEchoBin(t))
+	r.SQLDir = dir
+	raw, err := r.Analyze(context.Background(), "queries/report.sql")
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+	var got struct {
+		Arg1 string `json:"arg1"`
+		Arg2 string `json:"arg2"`
+		Pwd  string `json:"pwd"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unexpected output %s: %v", raw, err)
+	}
+	// 引数は analyze --sql-file=<path> --out - (旧 --sql は使わない)
+	if got.Arg1 != "--sql-file=queries/report.sql" {
+		t.Errorf("path must be passed as one --sql-file=<path> arg, got %q", got.Arg1)
+	}
+	if got.Pwd != dir {
+		t.Errorf("subprocess dir = %q, want %q", got.Pwd, dir)
+	}
+}
+
+func TestAnalyzeRejectsLeadingDashAndEmptyPath(t *testing.T) {
+	r := New(argsEchoBin(t))
+	for _, p := range []string{"", "-x.sql", "--out=evil.sql"} {
+		if _, err := r.Analyze(context.Background(), p); err == nil {
+			t.Errorf("Analyze(%q) should be rejected before exec", p)
+		}
 	}
 }
