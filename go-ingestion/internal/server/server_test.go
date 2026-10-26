@@ -154,6 +154,26 @@ func TestViolationsPaginationInvalidLimit(t *testing.T) {
 	}
 }
 
+func TestViolationsPaginationInvalidOffset(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?offset=abc", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
+func TestViolationsPaginationNegativeOffset(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?offset=-1", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
 func TestViolationsPaginationExceedMaxLimit(t *testing.T) {
 	srv := newTestServer(&fakeStore{}, &fakeRunner{})
 	w := httptest.NewRecorder()
