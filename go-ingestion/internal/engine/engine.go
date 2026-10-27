@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // DefaultBin は bin 未指定時の既定値。絶対パスでないため New() に渡すとエラーになる。
@@ -29,6 +30,9 @@ type Violation struct {
 // Runner は dataguard-engine の実行者。
 type Runner struct {
 	Bin string
+	// SQLDir は Analyze のサブプロセスの作業ディレクトリ。Analyze に渡す相対パスはこの
+	// ディレクトリ基準で解決される。空ならプロセスのカレントディレクトリ。
+	SQLDir string
 }
 
 // New は Runner を返す。bin は絶対パスでなければならない。
@@ -53,10 +57,18 @@ func (r *Runner) Check(ctx context.Context, inputCSV, rulesPath string) ([]Viola
 	return violations, nil
 }
 
-// Analyze は `dataguard-engine analyze --sql <file> --out -` を実行し、
+// Analyze は `dataguard-engine analyze --sql-file=<file> --out -` を実行し、
 // lineage JSON をそのまま返す (Go 側で構造を固定しないため RawMessage)。
+//
+// --sql-file はファイルのみを受け付け、ファイルが無い場合に文字列を SQL として
+// 解析するフォールバックを持たない(外部入力のパスを渡す経路のため)。
+// パスは "--sql-file=<path>" の単一引数で渡し、先頭が "-" の値がオプションとして
+// 解釈されないようにする。先頭が "-" のパスは念のためここでも拒否する。
 func (r *Runner) Analyze(ctx context.Context, sqlPath string) (json.RawMessage, error) {
-	out, err := r.run(ctx, "analyze", "--sql", sqlPath, "--out", "-")
+	if sqlPath == "" || strings.HasPrefix(sqlPath, "-") {
+		return nil, fmt.Errorf("engine: 無効な sql パスです")
+	}
+	out, err := r.runIn(ctx, r.SQLDir, "analyze", "--sql-file="+sqlPath, "--out", "-")
 	if err != nil {
 		return nil, err
 	}
@@ -67,10 +79,16 @@ func (r *Runner) Analyze(ctx context.Context, sqlPath string) (json.RawMessage, 
 // PATH ハイジャック防止のため Bin は絶対パスでなければならない。
 // ctx がキャンセルされると exec.CommandContext がサブプロセスを Kill する。
 func (r *Runner) run(ctx context.Context, args ...string) ([]byte, error) {
+	return r.runIn(ctx, "", args...)
+}
+
+// runIn は run と同じだが、dir が空でなければそれを作業ディレクトリにする。
+func (r *Runner) runIn(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	if !filepath.IsAbs(r.Bin) {
 		return nil, fmt.Errorf("engine: Bin %q は絶対パスでなければなりません (PATH ハイジャック防止)", r.Bin)
 	}
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
+	cmd.Dir = dir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
