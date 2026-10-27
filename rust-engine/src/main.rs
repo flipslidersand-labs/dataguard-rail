@@ -105,8 +105,11 @@ TLS/mTLS フラグの組み合わせルール:\n\
 --addr にバインドする場合は起動を拒否する（--insecure を指定しない限り）。\n\
   * --tls-client-ca を追加すると、クライアント証明書の検証（mTLS）を要求する。\
 単独では使えず --tls-cert / --tls-key と併用する必要がある。\n\
+  * ループバック外にバインドする場合は --tls-client-ca（mTLS）が必須。TLS のみ（クライアント\
+証明書なし）で起動するには --allow-tls-without-client-auth の明示が必要（非推奨）。\
   * --insecure はループバック外への平文バインドを明示的に許可する（非推奨。\
-信頼できないネットワークに公開しないこと）。",
+信頼できないネットワークに公開しないこと）。\n\
+  * --base-dir（既定: カレントディレクトリ）配下のファイルだけを RPC が読む。",
         after_help = "EXAMPLES:\n\
     # ループバックで平文起動（開発用）\n\
     dataguard-engine serve --addr 127.0.0.1:50051\n\n\
@@ -115,6 +118,8 @@ TLS/mTLS フラグの組み合わせルール:\n\
     # mTLS（クライアント証明書検証つき）で起動\n\
     dataguard-engine serve --addr 0.0.0.0:50051 \\\n\
         --tls-cert server.pem --tls-key server.key --tls-client-ca client-ca.pem\n\n\
+    # 基準ディレクトリを指定\n\
+    dataguard-engine serve --base-dir /srv/dataguard/data\n\n\
     # ループバック外へ TLS なしで明示的に起動（非推奨）\n\
     dataguard-engine serve --addr 0.0.0.0:50051 --insecure"
     )]
@@ -135,6 +140,14 @@ TLS/mTLS フラグの組み合わせルール:\n\
         /// ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）。
         #[arg(long)]
         insecure: bool,
+        /// ループバック外で --tls-client-ca（mTLS）なしの TLS 起動を明示的に許可する（非推奨）。
+        /// TLS は通信の秘匿のみで、接続元の認証にはならない。
+        #[arg(long)]
+        allow_tls_without_client_auth: bool,
+        /// RPC が読み取るファイルの基準ディレクトリ（既定: カレントディレクトリ）。
+        /// 相対パスをこの配下に解決し（シンボリックリンク解決後）、範囲外は拒否する。
+        #[arg(long, default_value = ".")]
+        base_dir: String,
     },
 }
 
@@ -151,7 +164,20 @@ async fn main() -> Result<()> {
             tls_key,
             tls_client_ca,
             insecure,
-        } => run_serve(addr, tls_cert, tls_key, tls_client_ca, insecure).await,
+            allow_tls_without_client_auth,
+            base_dir,
+        } => {
+            run_serve(
+                addr,
+                tls_cert,
+                tls_key,
+                tls_client_ca,
+                insecure,
+                allow_tls_without_client_auth,
+                base_dir,
+            )
+            .await
+        }
     }
 }
 
@@ -235,12 +261,42 @@ fn run_check(input: String, rules: String, out: String) -> Result<()> {
     Ok(())
 }
 
+/// ループバック外にバインドする場合の TLS / mTLS 要件を判定する。
+/// ファイルを読む前に呼び、要件を満たさなければ理由つきで起動を拒否する。
+fn check_bind_policy(
+    addr: &str,
+    is_loopback: bool,
+    has_tls: bool,
+    has_client_ca: bool,
+    allow_tls_without_client_auth: bool,
+) -> Result<()> {
+    if is_loopback || !has_tls || has_client_ca {
+        return Ok(());
+    }
+    if !allow_tls_without_client_auth {
+        anyhow::bail!(
+            "refusing to bind {addr} with TLS but without client authentication: \
+             this addr is not loopback. Provide --tls-client-ca to require mTLS, \
+             or pass --allow-tls-without-client-auth to opt in explicitly \
+             (TLS alone does not authenticate the caller)."
+        );
+    }
+    eprintln!(
+        "WARNING: --addr {addr} はループバック外で、クライアント証明書の検証（mTLS）なしです。\
+         --allow-tls-without-client-auth が指定されたため、到達できる任意のクライアントが \
+         RPC を呼べる状態で起動します。"
+    );
+    Ok(())
+}
+
 async fn run_serve(
     addr: String,
     tls_cert: Option<String>,
     tls_key: Option<String>,
     tls_client_ca: Option<String>,
     insecure: bool,
+    allow_tls_without_client_auth: bool,
+    base_dir: String,
 ) -> Result<()> {
     use grpc::dataguard::data_guard_server::DataGuardServer;
     use grpc::DataGuardService;
@@ -249,6 +305,15 @@ async fn run_serve(
     let addr_parsed: std::net::SocketAddr = addr
         .parse()
         .with_context(|| format!("invalid addr: {addr}"))?;
+
+    check_bind_policy(
+        &addr,
+        addr_parsed.ip().is_loopback(),
+        tls_cert.is_some() && tls_key.is_some(),
+        tls_client_ca.is_some(),
+        allow_tls_without_client_auth,
+    )?;
+    let service = DataGuardService::new(std::path::Path::new(&base_dir))?;
 
     let tls_config = match (&tls_cert, &tls_key) {
         (Some(cert_path), Some(key_path)) => {
@@ -300,11 +365,42 @@ async fn run_serve(
             .context("invalid TLS configuration")?;
     }
     builder
-        .add_service(DataGuardServer::new(DataGuardService))
+        .add_service(DataGuardServer::new(service))
         .serve(addr_parsed)
         .await
         .context("gRPC server error")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod bind_policy_tests {
+    use super::check_bind_policy;
+
+    #[test]
+    fn loopback_allows_tls_without_client_ca() {
+        assert!(check_bind_policy("127.0.0.1:1", true, true, false, false).is_ok());
+    }
+
+    #[test]
+    fn non_loopback_tls_without_client_ca_is_refused() {
+        let err = check_bind_policy("0.0.0.0:1", false, true, false, false).unwrap_err();
+        assert!(err.to_string().contains("--tls-client-ca"));
+    }
+
+    #[test]
+    fn non_loopback_tls_with_client_ca_is_allowed() {
+        assert!(check_bind_policy("0.0.0.0:1", false, true, true, false).is_ok());
+    }
+
+    #[test]
+    fn non_loopback_tls_without_client_ca_allowed_with_explicit_flag() {
+        assert!(check_bind_policy("0.0.0.0:1", false, true, false, true).is_ok());
+    }
+
+    #[test]
+    fn plaintext_case_is_left_to_insecure_check() {
+        assert!(check_bind_policy("0.0.0.0:1", false, false, false, false).is_ok());
+    }
 }
 
 #[cfg(test)]
