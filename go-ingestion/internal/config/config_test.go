@@ -3,7 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func writeTemp(t *testing.T, content string) string {
@@ -84,5 +86,43 @@ sources:
 `)
 	if _, err := Load(p); err != nil {
 		t.Fatalf("empty schedule should not error: %v", err)
+	}
+}
+
+func TestEffectiveQueryTimeoutDefault(t *testing.T) {
+	d := &DataSource{}
+	if got := d.EffectiveQueryTimeout(); got != DefaultQueryTimeout {
+		t.Errorf("未設定時は DefaultQueryTimeout(%v) のはず: got %v", DefaultQueryTimeout, got)
+	}
+	if DefaultQueryTimeout != 30*time.Second {
+		t.Errorf("DefaultQueryTimeout は 30s のはず: got %v", DefaultQueryTimeout)
+	}
+}
+
+func TestEffectiveQueryTimeoutOverride(t *testing.T) {
+	d := &DataSource{QueryTimeout: 10 * time.Second}
+	if got := d.EffectiveQueryTimeout(); got != 10*time.Second {
+		t.Errorf("want 10s, got %v", got)
+	}
+}
+
+func TestEffectiveQueryTimeoutNegativeFallsBackToDefault(t *testing.T) {
+	d := &DataSource{QueryTimeout: -5 * time.Second}
+	if got := d.EffectiveQueryTimeout(); got != DefaultQueryTimeout {
+		t.Errorf("負値は DefaultQueryTimeout にフォールバックするはず: got %v", got)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	const path = "/nonexistent/sources.yaml"
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("存在しないパスでエラーが返るべき")
+	}
+	if !strings.Contains(err.Error(), "read config") {
+		t.Errorf("エラーに %q が含まれるべき: %v", "read config", err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("エラーにパス %q が含まれるべき: %v", path, err)
 	}
 }
