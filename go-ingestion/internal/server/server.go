@@ -39,11 +39,43 @@ type Server struct {
 	engine   *gin.Engine
 	apiKey   string
 	log      *zap.Logger
+
+	// sqlDir は /api/lineage が読む .sql ファイルの基準ディレクトリ(既定: カレントディレクトリ)。
+	sqlDir string
+	// lineageSem は lineage 解析のサブプロセス同時実行数を制限するセマフォ。
+	lineageSem chan struct{}
+}
+
+// DefaultMaxLineageConcurrency は lineage 解析の同時実行数の既定上限。
+const DefaultMaxLineageConcurrency = 4
+
+// Option は Server の任意設定。
+type Option func(*Server)
+
+// WithSQLDir は /api/lineage が読む .sql ファイルの基準ディレクトリを設定する。
+func WithSQLDir(dir string) Option {
+	return func(s *Server) { s.sqlDir = dir }
+}
+
+// WithMaxLineageConcurrency は lineage 解析の同時実行数の上限を設定する(n < 1 は無視)。
+func WithMaxLineageConcurrency(n int) Option {
+	return func(s *Server) {
+		if n >= 1 {
+			s.lineageSem = make(chan struct{}, n)
+		}
+	}
+}
+
+// internalError は詳細(絶対パス・stderr 等を含みうる err)をサーバーのログにだけ出し、
+// クライアントには固定文言の 500 を返す。
+func (s *Server) internalError(c *gin.Context, op string, err error) {
+	s.log.Error("request failed", zap.String("op", op), zap.Error(err))
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "内部エラーが発生しました"})
 }
 
 // New はサーバーインスタンスを生成する。apiKey が空の場合、認証は無効化される
 // (ローカル開発用途のみを想定。本番運用では必ず指定すること)。
-func New(st Storer, runner Runner, notifier alert.Notifier, apiKey string, log *zap.Logger) *Server {
+func New(st Storer, runner Runner, notifier alert.Notifier, apiKey string, log *zap.Logger, opts ...Option) *Server {
 	if notifier == nil {
 		notifier = alert.NoopNotifier{}
 	}
@@ -54,7 +86,14 @@ func New(st Storer, runner Runner, notifier alert.Notifier, apiKey string, log *
 	r := gin.New()
 	r.Use(gin.Recovery())
 
-	s := &Server{store: st, runner: runner, notifier: notifier, engine: r, apiKey: apiKey, log: log}
+	s := &Server{
+		store: st, runner: runner, notifier: notifier, engine: r, apiKey: apiKey, log: log,
+		sqlDir:     ".",
+		lineageSem: make(chan struct{}, DefaultMaxLineageConcurrency),
+	}
+	for _, opt := range opts {
+		opt(s)
+	}
 	s.registerRoutes()
 	return s
 }
