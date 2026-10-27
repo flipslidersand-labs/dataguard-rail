@@ -23,7 +23,7 @@ func (s *Server) handleSchemaDiff(c *gin.Context) {
 	if table != "" {
 		diff, err := s.store.LatestDiff(table)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			s.internalError(c, "schema_diff.latest", err)
 			return
 		}
 		if diff == nil {
@@ -48,7 +48,7 @@ func (s *Server) handleSchemaDiff(c *gin.Context) {
 
 	diffs, err := s.store.ListDiffs()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		s.internalError(c, "schema_diff.list", err)
 		return
 	}
 	span.SetAttributes(attribute.Int("diff.count", len(diffs)))
