@@ -108,7 +108,10 @@ func (s *Server) registerRoutes() {
 		protected = append(protected, s.authMiddleware())
 	}
 
-	s.engine.GET("/", append(protected, s.handleDashboard)...)
+	// ダッシュボードの HTML は静的でデータを含まない(データは認証付きの /api から取得する)。
+	// ブラウザのページ遷移では Authorization ヘッダを付けられないため、HTML 自体は認証なしで
+	// 配信し、画面上のキー入力欄から /api へ Bearer を付けてアクセスする。
+	s.engine.GET("/", s.handleDashboard)
 
 	v1 := s.engine.Group("/api", protected...)
 	v1.GET("/violations", s.handleViolations)
@@ -129,10 +132,10 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 	}
 }
 
-// Run は addr でリッスンを開始する。
-// Slowloris 型のリソース枯渇を防ぐため、明示的な http.Server でタイムアウトを設定する。
-func (s *Server) Run(addr string) error {
-	srv := &http.Server{
+// newHTTPServer は addr 用の http.Server を返す。
+// Slowloris 型のリソース枯渇を防ぐため、明示的にタイムアウトを設定する。
+func (s *Server) newHTTPServer(addr string) *http.Server {
+	return &http.Server{
 		Addr:              addr,
 		Handler:           s.engine,
 		ReadHeaderTimeout: 5 * time.Second,
@@ -140,7 +143,16 @@ func (s *Server) Run(addr string) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	return srv.ListenAndServe()
+}
+
+// Run は addr で平文 HTTP のリッスンを開始する。
+func (s *Server) Run(addr string) error {
+	return s.newHTTPServer(addr).ListenAndServe()
+}
+
+// RunTLS は addr で TLS(HTTPS)のリッスンを開始する。certFile / keyFile は PEM。
+func (s *Server) RunTLS(addr, certFile, keyFile string) error {
+	return s.newHTTPServer(addr).ListenAndServeTLS(certFile, keyFile)
 }
 
 // Handler はテスト用に gin.Engine を返す。
