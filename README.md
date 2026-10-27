@@ -99,7 +99,7 @@ dataguard ingest --grpc-addr localhost:50051 \
 > **Security / セキュリティ注意:** デフォルトはループバック (`[::1]`) バインドで
 > TLS 未対応の平文通信です。`--addr`/`--grpc-addr` を**ループバック外**に向ける場合、
 > TLS/mTLS（下記）または `--insecure`/`--grpc-insecure` の明示的な opt-in が
-> 無いと **起動/接続を拒否**します（中間者攻撃による `csv_path`/`sql_path` の
+> 無いと **起動/接続を拒否**します。TLS を使う場合もループバック外では mTLS が必須です（中間者攻撃による `csv_path`/`sql_path` の
 > 書き換え、`violations_json` の改ざんを防ぐため）。
 
 #### TLS / mTLS でループバック外の Go↔Rust 通信を保護する
@@ -138,6 +138,23 @@ dataguard ingest --grpc-addr engine.internal:50051 \
 ループバック限定運用で TLS が不要な場合は、既定のまま（`--tls-cert`/`--grpc-tls-ca`
 未指定）で従来通り平文で動作します。ループバック外でどうしても TLS を使わない場合のみ、
 `dataguard-engine serve --insecure` / `dataguard ingest --grpc-insecure` を明示的に指定してください。
+
+#### 既定値の強化（破壊的変更）
+
+- **ループバック外にバインドする場合、`--tls-client-ca`（mTLS）が必須**になりました。
+  TLS はサーバーの認証と通信の秘匿だけで、接続元の認証にはならないためです。
+  TLS のみ（クライアント証明書なし）で起動すると、理由つきのエラーで拒否されます。
+  どうしても必要な場合のみ `--allow-tls-without-client-auth` で明示的に許可できます（非推奨）。
+  ループバック限定運用と `--insecure`（平文の明示 opt-in）の挙動は変わりません。
+- **gRPC が読むファイルは基準ディレクトリ配下に限定**されます。`--base-dir`（既定: カレントディレクトリ）
+  に対して相対パスを結合し、シンボリックリンクを解決したうえで配下であることを確認します。
+  範囲外のパスは拒否されます。従来の「絶対パス拒否」「`..` 拒否」は維持されます。
+  データの置き場所がカレントディレクトリ外の場合は `--base-dir` を指定してください。
+
+```bash
+dataguard-engine serve --addr engine.internal:50051 --base-dir /srv/dataguard/data \
+  --tls-cert server.crt --tls-key server.key --tls-client-ca ca.crt
+```
 
 ### Daemon mode / スケジューラモード (`--daemon`)
 
