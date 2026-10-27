@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flipslidersand/dataguard-rail/internal/config"
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/ingester"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/ingester"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )

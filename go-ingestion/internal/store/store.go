@@ -9,7 +9,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 	"go.uber.org/zap"
 )
 

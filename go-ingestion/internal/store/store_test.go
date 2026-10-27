@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 )
 
 func TestSaveAndListViolations(t *testing.T) {

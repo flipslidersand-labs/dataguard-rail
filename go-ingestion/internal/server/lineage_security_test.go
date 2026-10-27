@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/store"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/store"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
