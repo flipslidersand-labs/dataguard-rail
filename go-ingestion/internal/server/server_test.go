@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
@@ -16,9 +19,11 @@ import (
 
 // fakeStore はテスト用の Storer 実装。
 type fakeStore struct {
-	violations []engine.Violation
-	diff       *store.SchemaDiff
-	diffs      []store.SchemaDiff
+	violations   []engine.Violation
+	diff         *store.SchemaDiff
+	diffs        []store.SchemaDiff
+	diffErr      error
+	listDiffsErr error
 }
 
 func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
@@ -50,8 +55,8 @@ func pageViolations(all []engine.Violation, limit, offset int) []engine.Violatio
 	}
 	return all[offset:end]
 }
-func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, nil }
-func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, nil }
+func (f *fakeStore) LatestDiff(_ string) (*store.SchemaDiff, error) { return f.diff, f.diffErr }
+func (f *fakeStore) ListDiffs() ([]store.SchemaDiff, error)         { return f.diffs, f.listDiffsErr }
 
 // fakeRunner はテスト用の Runner 実装。
 type fakeRunner struct{ payload json.RawMessage }
@@ -154,6 +159,26 @@ func TestViolationsPaginationInvalidLimit(t *testing.T) {
 	}
 }
 
+func TestViolationsPaginationInvalidOffset(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?offset=abc", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
+func TestViolationsPaginationNegativeOffset(t *testing.T) {
+	srv := newTestServer(&fakeStore{}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/violations?offset=-1", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", w.Code)
+	}
+}
+
 func TestViolationsPaginationExceedMaxLimit(t *testing.T) {
 	srv := newTestServer(&fakeStore{}, &fakeRunner{})
 	w := httptest.NewRecorder()
@@ -186,7 +211,12 @@ func TestLineageAbsolutePathRejected(t *testing.T) {
 
 func TestLineageOK(t *testing.T) {
 	payload := json.RawMessage(`{"target":"t","sources":["s"],"has_cycle":false}`)
-	srv := newTestServer(&fakeStore{}, &fakeRunner{payload: payload})
+	// /api/lineage は基準ディレクトリ(--sql-dir)配下に実在する .sql だけを受け付ける。
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.sql"), []byte("SELECT 1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(&fakeStore{}, &fakeRunner{payload: payload}, nil, "", nil, WithSQLDir(dir))
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/lineage?sql=x.sql", nil)
 	srv.Handler().ServeHTTP(w, req)
@@ -282,13 +312,48 @@ func TestDashboard(t *testing.T) {
 
 func TestAuthMissingToken(t *testing.T) {
 	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
-	for _, path := range []string{"/", "/api/violations"} {
+	for _, path := range []string{"/api/violations", "/api/schema-diff", "/api/lineage?sql=a.sql"} {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(http.MethodGet, path, nil)
 		srv.Handler().ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s: want 401, got %d", path, w.Code)
 		}
+	}
+}
+
+// ダッシュボードの HTML は静的でデータを含まないため、API キー設定時もキー入力欄を
+// 表示できるよう認証なしで配信する。データは認証付きの /api からのみ取得される。
+func TestDashboardHTMLServedWithoutKeyAndCarriesNoData(t *testing.T) {
+	st := &fakeStore{violations: []engine.Violation{{ID: "v-secret-marker", Table: "t", Rule: "r"}}}
+	srv := newAuthedTestServer(st, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", w.Code)
+	}
+	if containsAll(w.Body.String(), "v-secret-marker") {
+		t.Error("dashboard HTML must not embed stored data")
+	}
+}
+
+func TestDashboardHasKeyInputAndSendsBearerInMemoryOnly(t *testing.T) {
+	srv := newAuthedTestServer(&fakeStore{}, &fakeRunner{}, "secret")
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/", nil)
+	srv.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	if !containsAll(body, `id="api-key"`, `type="password"`, "'Authorization': 'Bearer ' + apiKey", "apiFetch('/api/violations')", "apiFetch('/api/schema-diff')") {
+		t.Error("dashboard must provide a key input and send it as Authorization: Bearer on fetch")
+	}
+	for _, banned := range []string{"localStorage", "sessionStorage", "document.cookie"} {
+		if containsAll(body, banned) {
+			t.Errorf("API key must stay in memory only, found %q", banned)
+		}
+	}
+	if !containsAll(body, "function esc(s)", "${esc(v.rule)}") {
+		t.Error("esc() based escaping must be preserved")
 	}
 }
 
@@ -338,4 +403,34 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestSchemaDiffTableStoreError(t *testing.T) {
+	srv := newTestServer(&fakeStore{diffErr: errors.New("boom latest")}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff?table=users", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", w.Code)
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "内部エラーが発生しました" {
+		t.Errorf("unexpected error body: %s", w.Body.String())
+	}
+}
+
+func TestSchemaDiffAllStoreError(t *testing.T) {
+	srv := newTestServer(&fakeStore{listDiffsErr: errors.New("boom list")}, &fakeRunner{})
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/schema-diff", nil)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d", w.Code)
+	}
+	var body map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["error"] != "内部エラーが発生しました" {
+		t.Errorf("unexpected error body: %s", w.Body.String())
+	}
 }
