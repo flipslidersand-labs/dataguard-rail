@@ -28,14 +28,14 @@ func (s *Server) handleViolations(c *gin.Context) {
 	if table == "" {
 		total, err := s.store.CountViolations()
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			s.internalError(c, "violations.count", err)
 			return
 		}
 		c.Header("X-Total-Count", strconv.Itoa(total))
 
 		violations, err := s.store.ListViolationsPaged(limit, offset)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			s.internalError(c, "violations.list", err)
 			return
 		}
 		c.JSON(http.StatusOK, violations)
@@ -47,14 +47,14 @@ func (s *Server) handleViolations(c *gin.Context) {
 	// 全件ロード・Go 側フィルタは不要（#99）。
 	total, err := s.store.CountViolationsByTable(table)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		s.internalError(c, "violations.count_by_table", err)
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
 
 	violations, err := s.store.ListViolationsByTablePaged(table, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		s.internalError(c, "violations.list_by_table", err)
 		return
 	}
 	c.JSON(http.StatusOK, violations)
