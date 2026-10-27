@@ -13,6 +13,9 @@ func TestValidateSQLPath(t *testing.T) {
 		{"/etc/dataguard/secrets/internal.sql", false},
 		{"../secrets/internal.sql", false},
 		{"queries/../../etc/passwd.sql", false},
+		{"-x.sql", false},
+		{"--sql=x.sql", false},
+		{"./-x.sql", false},
 		{"report.txt", false},
 		{"report", false},
 	}
