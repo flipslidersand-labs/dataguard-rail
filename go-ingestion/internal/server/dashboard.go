@@ -41,6 +41,9 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
   .tag-diff { background: #fef3c7; color: #92400e; }
   .empty { color: #999; font-style: italic; padding: 1rem 0; text-align: center; }
   #status { font-size: .8rem; color: #666; margin-left: auto; }
+  .keybar { display: flex; align-items: center; gap: .5rem; padding: .5rem 2rem; background: #fff; border-bottom: 1px solid #e5e7eb; font-size: .85rem; }
+  .keybar input { padding: .35rem .6rem; border: 1px solid #ddd; border-radius: 6px; width: 22rem; max-width: 100%; }
+  .keybar button { padding: .35rem .75rem; background: #1a1a2e; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -49,6 +52,11 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
   <span class="badge">Dashboard</span>
   <span id="status">読み込み中…</span>
 </header>
+<div class="keybar">
+  <label for="api-key">API キー</label>
+  <input id="api-key" type="password" autocomplete="off" placeholder="Authorization: Bearer に使用(保存されません)">
+  <button type="button" id="api-key-apply">適用して再読み込み</button>
+</div>
 <main>
   <div class="cards">
     <div class="card" id="card-total">
@@ -95,12 +103,22 @@ var dashboardTmpl = template.Must(template.New("dashboard").Parse(`<!DOCTYPE htm
 
 <script>
 let allViolations = [];
+// API キーはメモリ上にのみ保持する(localStorage / sessionStorage / Cookie には保存しない)。
+let apiKey = '';
+
+function apiFetch(path) {
+  const headers = apiKey ? { 'Authorization': 'Bearer ' + apiKey } : {};
+  return fetch(path, { headers });
+}
 
 async function load() {
   const [violRes, diffRes] = await Promise.all([
-    fetch('/api/violations'),
-    fetch('/api/schema-diff'),
+    apiFetch('/api/violations'),
+    apiFetch('/api/schema-diff'),
   ]);
+  if (violRes.status === 401 || diffRes.status === 401) {
+    document.getElementById('status').textContent = '認証が必要です: API キーを入力してください';
+  }
   allViolations = violRes.ok ? await violRes.json() : [];
   const diffs = diffRes.ok ? await diffRes.json() : [];
 
@@ -113,17 +131,18 @@ async function load() {
 
   // table filter options
   const sel = document.getElementById('table-filter');
+  while (sel.options.length > 1) sel.remove(1);
   [...tables].sort().forEach(t => {
     const o = document.createElement('option');
     o.value = t; o.textContent = t;
     sel.appendChild(o);
   });
-  sel.addEventListener('change', renderViolations);
-  document.getElementById('rule-filter').addEventListener('input', renderViolations);
 
   renderViolations();
   renderDiffs(diffs);
-  document.getElementById('status').textContent = '最終更新: ' + new Date().toLocaleTimeString('ja-JP');
+  if (violRes.ok && diffRes.ok) {
+    document.getElementById('status').textContent = '最終更新: ' + new Date().toLocaleTimeString('ja-JP');
+  }
 }
 
 function renderViolations() {
@@ -176,6 +195,16 @@ function clearFilters() {
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
+
+document.getElementById('table-filter').addEventListener('change', renderViolations);
+document.getElementById('rule-filter').addEventListener('input', renderViolations);
+document.getElementById('api-key-apply').addEventListener('click', () => {
+  apiKey = document.getElementById('api-key').value;
+  load();
+});
+document.getElementById('api-key').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { apiKey = e.target.value; load(); }
+});
 
 load();
 </script>
