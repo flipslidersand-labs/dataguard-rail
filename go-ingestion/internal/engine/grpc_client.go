@@ -131,6 +131,9 @@ func warnIfNotLoopback(addr string) {
 			"信頼できないネットワークを経由させず、SSH トンネル等で保護してください。\n", addr)
 }
 
+// IsLoopbackAddr は isLoopbackAddr の公開版。REST 側のバインド判定でも同じ基準を使うために公開する。
+func IsLoopbackAddr(addr string) bool { return isLoopbackAddr(addr) }
+
 // isLoopbackAddr は host:port もしくは host 単体の addr がループバックを指すか判定する。
 func isLoopbackAddr(addr string) bool {
 	host, _, err := net.SplitHostPort(addr)
