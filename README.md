@@ -12,6 +12,7 @@ Real-time data quality checking and column lineage tracking platform (Rust engin
 | CSV Quality Rules / CSV 品質ルール評価 | `not_null` / comparison / unique / regex constraints via `rules.yaml` / `rules.yaml` で定義 |
 | Data Profiling / データプロファイリング | Auto-computes min / max / mean / null_rate / unique_count per column / カラムごとに自動算出 |
 | Data Ingestion / データ取込み | CSV / JSONL / PostgreSQL → violations stored in BadgerDB |
+| Scheduled Ingestion / 定期実行 | cron-based periodic ingestion via `schedule` + `--daemon` (robfig/cron) / `schedule` と `--daemon` で cron 定期取込み |
 | REST API + Web UI | Dashboard + violations / lineage / schema-diff endpoints |
 | gRPC Integration / gRPC 統合 | Go ↔ Rust via tonic gRPC (`--grpc-addr`) |
 | OTel + Alerts / OTel + アラート | violations.total metric / Trace spans / Slack Webhook |
@@ -42,6 +43,7 @@ dataguard-rail/
 │       ├── ingester/           # CSV / JSONL / PostgreSQL ingestion / 取込み
 │       ├── engine/             # Rust engine invocation / Rust engine 呼び出し
 │       ├── pipeline/           # ingest flow / ingest フロー
+│       ├── scheduler/          # cron scheduler (--daemon) / cron スケジューラ
 │       ├── store/              # BadgerDB persistence / BadgerDB 永続化
 │       ├── server/             # gin REST API + Web UI dashboard
 │       ├── telemetry/          # OTel init + metrics / OTel 初期化・メトリクス
@@ -186,6 +188,20 @@ DATAGUARD_ALLOW_INSECURE=1 dataguard serve --addr :8080 --db data/violations
 dataguard-engine analyze --sql examples/sample.sql --out lineage.json
 ```
 
+`--sql` は手元の CLI 用で、ファイルが無い場合は文字列自体を SQL として解析します。
+他のプロセスから呼び出す場合は、ファイルのみを受け付ける `--sql-file=<path>`
+(ファイルが無ければエラー。`--sql` と排他)を使ってください。
+
+#### `/api/lineage` の入力パスの限定(破壊的変更)
+
+`dataguard serve --sql-dir <dir>`(既定: カレントディレクトリ)配下の `.sql` ファイルだけを受け付けます。
+`sql` パラメータは基準ディレクトリと結合後にシンボリックリンクを解決し、配下であることを確認します。
+範囲外・存在しないパス・先頭が `-` のパス・`.sql` 以外は一律 `400` で拒否されます
+(サーバー経由では、ファイルが無い場合に文字列を SQL として解析することはありません)。
+解析のサブプロセスは同時 4 件までで、超えると `429` を返します。
+エラー応答は固定文言のみで、詳細はサーバーのログに出力されます。
+`--grpc-addr` を使う場合、Rust エンジン側の `--base-dir` は `--sql-dir` と同じディレクトリにしてください。
+
 ### CSV Quality Check / CSV 品質チェック
 
 ```bash
@@ -218,7 +234,7 @@ cd go-ingestion && go test ./...
 | GET | `/` | Dashboard (Web UI) / violations & schema-diff ダッシュボード |
 | GET | `/health` | Health check / ヘルスチェック |
 | GET | `/api/violations` | List violations (`?table=xxx`) / 違反一覧 |
-| GET | `/api/lineage` | Get lineage (`?sql=path`) / リネージュ取得 |
+| GET | `/api/lineage` | Get lineage (`?sql=path`, under `--sql-dir`) / リネージュ取得 |
 | GET | `/api/schema-diff` | Schema diff (`?table=xxx`) / スキーマ差分 |
 
 ## Quality Rules / 品質ルール定義例 (`rules.yaml`)
