@@ -29,19 +29,30 @@ enum Command {
     #[command(
         long_about = "SQL ファイル (または生の SQL 文字列) を解析し、テーブル間のリネージュ \
 (依存関係グラフ) を JSON で出力する。\n\n\
---sql には .sql ファイルへのパス、または SQL 文そのものを渡せる。\
+--sql には .sql ファイルへのパス、または SQL 文そのものを渡せる（手元の CLI 用）。\
 拡張子が .sql なのにファイルが見つからない場合は、パスの誤りである可能性を警告しつつ、\
-その文字列自体を生の SQL として解析する。",
+その文字列自体を生の SQL として解析する。\n\
+--sql-file はファイルのみを受け付け、ファイルが無ければエラーにする（生 SQL への\
+フォールバックなし）。他のプロセスから呼び出す場合はこちらを使う。--sql と排他。",
         after_help = "EXAMPLES:\n\
     # ファイルを解析して lineage.json に出力\n\
     dataguard-engine analyze --sql queries/report.sql\n\n\
     # 生の SQL 文字列を解析し、結果を標準出力へ\n\
-    dataguard-engine analyze --sql \"INSERT INTO t2 SELECT * FROM t1\" --out -"
+    dataguard-engine analyze --sql \"INSERT INTO t2 SELECT * FROM t1\" --out -\n\n\
+    # ファイルのみを受け付ける（ファイルが無ければエラー）\n\
+    dataguard-engine analyze --sql-file=queries/report.sql --out -"
     )]
     Analyze {
         /// 解析対象。.sql ファイルへのパス、または生の SQL 文字列。
+        #[arg(
+            long,
+            conflicts_with = "sql_file",
+            required_unless_present = "sql_file"
+        )]
+        sql: Option<String>,
+        /// 解析対象の .sql ファイルパス。ファイルが無ければエラー（生 SQL としては解析しない）。
         #[arg(long)]
-        sql: String,
+        sql_file: Option<String>,
         /// 出力先ファイルパス。"-" を指定すると標準出力に書き出す。
         #[arg(long, default_value = "lineage.json")]
         out: String,
@@ -144,7 +155,7 @@ TLS/mTLS フラグの組み合わせルール:\n\
 async fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
-        Command::Analyze { sql, out } => run_analyze(sql, out),
+        Command::Analyze { sql, sql_file, out } => run_analyze(sql, sql_file, out),
         Command::Check { input, rules, out } => run_check(input, rules, out),
         Command::Profile { input, out } => run_profile(input, out),
         Command::Serve {
@@ -176,7 +187,15 @@ fn should_warn_ambiguous_sql_path(sql: &str, exists: bool) -> bool {
     !exists && sql.to_lowercase().ends_with(".sql")
 }
 
-fn run_analyze(sql: String, out: String) -> Result<()> {
+/// 解析対象の SQL テキストを決める。
+/// `sql_file` はファイルのみ（読めなければエラー。生 SQL へのフォールバックなし）。
+/// `sql` は従来どおり、ファイルが存在すればその内容、無ければ文字列自体を SQL として扱う。
+fn load_sql_text(sql: Option<String>, sql_file: Option<String>) -> Result<String> {
+    if let Some(path) = sql_file {
+        return fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read SQL file: {path}"));
+    }
+    let sql = sql.context("either --sql or --sql-file is required")?;
     let exists = std::path::Path::new(&sql).exists();
     if should_warn_ambiguous_sql_path(&sql, exists) {
         eprintln!(
@@ -184,11 +203,15 @@ fn run_analyze(sql: String, out: String) -> Result<()> {
              パスの誤りでなければ、この文字列自体を生の SQL として解析します。"
         );
     }
-    let sql_text = if exists {
-        fs::read_to_string(&sql).with_context(|| format!("Failed to read SQL file: {sql}"))?
+    if exists {
+        fs::read_to_string(&sql).with_context(|| format!("Failed to read SQL file: {sql}"))
     } else {
-        sql
-    };
+        Ok(sql)
+    }
+}
+
+fn run_analyze(sql: Option<String>, sql_file: Option<String>, out: String) -> Result<()> {
+    let sql_text = load_sql_text(sql, sql_file)?;
 
     let report = lineage::analyze(&sql_text)?;
     let json = serde_json::to_string_pretty(&report)?;
@@ -382,7 +405,57 @@ mod bind_policy_tests {
 
 #[cfg(test)]
 mod analyze_sql_path_tests {
-    use super::should_warn_ambiguous_sql_path;
+    use super::{load_sql_text, should_warn_ambiguous_sql_path, Args};
+    use clap::Parser;
+
+    #[test]
+    fn sql_file_missing_is_an_error_and_never_parsed_as_raw_sql() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.sql");
+        let err = load_sql_text(None, Some(missing.to_string_lossy().into_owned()))
+            .expect_err("missing --sql-file must fail");
+        assert!(err.to_string().contains("Failed to read SQL file"));
+        // 存在しないパス文字列が、そのまま SQL として返ることはない。
+        assert!(load_sql_text(None, Some("SELECT 1".to_string())).is_err());
+    }
+
+    #[test]
+    fn sql_file_reads_file_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("q.sql");
+        std::fs::write(&p, "SELECT 1").unwrap();
+        let got = load_sql_text(None, Some(p.to_string_lossy().into_owned())).unwrap();
+        assert_eq!(got, "SELECT 1");
+    }
+
+    #[test]
+    fn sql_keeps_cli_raw_sql_fallback() {
+        let got = load_sql_text(Some("SELECT * FROM t".to_string()), None).unwrap();
+        assert_eq!(got, "SELECT * FROM t");
+    }
+
+    #[test]
+    fn sql_and_sql_file_are_mutually_exclusive_and_one_is_required() {
+        assert!(
+            Args::try_parse_from(["e", "analyze", "--sql", "a", "--sql-file", "b.sql"]).is_err()
+        );
+        assert!(Args::try_parse_from(["e", "analyze"]).is_err());
+        assert!(Args::try_parse_from(["e", "analyze", "--sql-file", "b.sql"]).is_ok());
+        assert!(Args::try_parse_from(["e", "analyze", "--sql", "SELECT 1"]).is_ok());
+    }
+
+    #[test]
+    fn sql_file_equals_form_accepts_value_starting_with_dash_as_a_value() {
+        // "--sql-file=<path>" 形式なら、先頭が "-" の値もオプションとして解釈されない。
+        let args = Args::try_parse_from(["e", "analyze", "--sql-file=-x.sql"]).unwrap();
+        match args.command {
+            super::Command::Analyze { sql, sql_file, .. } => {
+                assert!(sql.is_none());
+                assert_eq!(sql_file.as_deref(), Some("-x.sql"));
+            }
+            _ => panic!("expected analyze"),
+        }
+    }
 
     #[test]
     fn warns_when_sql_extension_but_missing_file() {
