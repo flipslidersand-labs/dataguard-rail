@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flipslidersand/dataguard-rail/internal/config"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
 )
 
 func TestRegisterInvalidCron(t *testing.T) {

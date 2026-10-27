@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/flipslidersand/dataguard-rail/internal/alert"
-	"github.com/flipslidersand/dataguard-rail/internal/config"
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/ingester"
-	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/alert"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/ingester"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/telemetry"
 	"go.uber.org/zap"
 )
 

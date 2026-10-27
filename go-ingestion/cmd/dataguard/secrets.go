@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 	"go.uber.org/zap"
 )
 
