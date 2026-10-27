@@ -306,6 +306,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refuses_tls_cert_without_key() {
+        let err = run_serve(
+            "127.0.0.1:0".to_string(),
+            Some("/nonexistent/server.crt".to_string()),
+            None,
+            None,
+            false,
+            false,
+            ".".to_string(),
+        )
+        .await
+        .expect_err("expected refusal when only --tls-cert is given");
+        assert!(
+            err.to_string()
+                .contains("--tls-cert and --tls-key must be set together"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn refuses_tls_key_without_cert() {
+        let err = run_serve(
+            "127.0.0.1:0".to_string(),
+            None,
+            Some("/nonexistent/server.key".to_string()),
+            None,
+            false,
+            false,
+            ".".to_string(),
+        )
+        .await
+        .expect_err("expected refusal when only --tls-key is given");
+        assert!(
+            err.to_string()
+                .contains("--tls-cert and --tls-key must be set together"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn mtls_handshake_succeeds_with_trusted_client_cert_and_fails_with_untrusted_one() {
         if !openssl_available() {
             eprintln!("skipping: openssl not found in PATH");

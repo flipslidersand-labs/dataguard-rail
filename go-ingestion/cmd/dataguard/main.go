@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/flipslidersand/dataguard-rail/internal/alert"
 	"github.com/flipslidersand/dataguard-rail/internal/config"
 	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/scheduler"
 	"github.com/flipslidersand/dataguard-rail/internal/ingester"
 	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
+	"github.com/flipslidersand/dataguard-rail/internal/scheduler"
 	"github.com/flipslidersand/dataguard-rail/internal/server"
 	"github.com/flipslidersand/dataguard-rail/internal/store"
 	"github.com/flipslidersand/dataguard-rail/internal/telemetry"
@@ -238,6 +239,7 @@ func newServeCmd() *cobra.Command {
 		engineBin string
 		grpcAddr  string
 		apiKey    string
+		sqlDir    string
 		grpcTLS   engine.GrpcTLSConfig
 	)
 	cmd := &cobra.Command{
@@ -254,7 +256,7 @@ func newServeCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			otelEndpoint, _ := cmd.Root().PersistentFlags().GetString("otel-endpoint")
 			slackWebhook, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
-			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, grpcTLS)
+			return runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, sqlDir, grpcTLS)
 		},
 	}
 	f := cmd.Flags()
@@ -262,6 +264,7 @@ func newServeCmd() *cobra.Command {
 	f.StringVar(&dbPath, "db", "data/violations", "BadgerDB のパス")
 	f.StringVar(&engineBin, "engine-bin", engine.DefaultBin, "dataguard-engine バイナリのパス（--grpc-addr 未指定時）")
 	f.StringVar(&grpcAddr, "grpc-addr", "", "dataguard-engine gRPC アドレス（例: localhost:50051）")
+	f.StringVar(&sqlDir, "sql-dir", ".", "/api/lineage が読む .sql ファイルの基準ディレクトリ（既定: カレントディレクトリ。配下のファイルのみ許可）")
 	f.StringVar(&apiKey, "api-key", "", "API 認証キー（未指定=認証無効。本番運用では必須）")
 	addGrpcTLSFlags(f, &grpcTLS)
 	return cmd
@@ -282,7 +285,7 @@ func checkAPIKeyRequirement(apiKey, allowInsecureEnv string) error {
 	return nil
 }
 
-func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey string, grpcTLS engine.GrpcTLSConfig) error {
+func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, apiKey, sqlDir string, grpcTLS engine.GrpcTLSConfig) error {
 	ctx := context.Background()
 	log, _ := zap.NewProduction()
 	defer func() { _ = log.Sync() }()
@@ -307,6 +310,14 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 	}
 	defer st.Close()
 
+	absSQLDir, err := filepath.Abs(sqlDir)
+	if err != nil {
+		return fmt.Errorf("--sql-dir: %w", err)
+	}
+	if fi, err := os.Stat(absSQLDir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("--sql-dir %q はディレクトリとして存在しません", sqlDir)
+	}
+
 	var runner server.Runner
 	if grpcAddr != "" {
 		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
@@ -316,11 +327,13 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 		defer gr.Close()
 		runner = gr
 	} else {
-		runner = engine.New(engineBin)
+		er := engine.New(engineBin)
+		er.SQLDir = absSQLDir
+		runner = er
 	}
 
 	notifier := alert.NewSlack(slackWebhook)
-	srv := server.New(st, runner, notifier, apiKey, log)
+	srv := server.New(st, runner, notifier, apiKey, log, server.WithSQLDir(absSQLDir))
 
 	log.Info("starting server", zap.String("addr", addr))
 	return srv.Run(addr)
