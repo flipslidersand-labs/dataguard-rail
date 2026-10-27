@@ -12,6 +12,7 @@ Real-time data quality checking and column lineage tracking platform (Rust engin
 | CSV Quality Rules / CSV 品質ルール評価 | `not_null` / comparison / unique / regex constraints via `rules.yaml` / `rules.yaml` で定義 |
 | Data Profiling / データプロファイリング | Auto-computes min / max / mean / null_rate / unique_count per column / カラムごとに自動算出 |
 | Data Ingestion / データ取込み | CSV / JSONL / PostgreSQL → violations stored in BadgerDB |
+| Scheduled Ingestion / 定期実行 | cron-based periodic ingestion via `schedule` + `--daemon` (robfig/cron) / `schedule` と `--daemon` で cron 定期取込み |
 | REST API + Web UI | Dashboard + violations / lineage / schema-diff endpoints |
 | gRPC Integration / gRPC 統合 | Go ↔ Rust via tonic gRPC (`--grpc-addr`) |
 | OTel + Alerts / OTel + アラート | violations.total metric / Trace spans / Slack Webhook |
@@ -42,6 +43,7 @@ dataguard-rail/
 │       ├── ingester/           # CSV / JSONL / PostgreSQL ingestion / 取込み
 │       ├── engine/             # Rust engine invocation / Rust engine 呼び出し
 │       ├── pipeline/           # ingest flow / ingest フロー
+│       ├── scheduler/          # cron scheduler (--daemon) / cron スケジューラ
 │       ├── store/              # BadgerDB persistence / BadgerDB 永続化
 │       ├── server/             # gin REST API + Web UI dashboard
 │       ├── telemetry/          # OTel init + metrics / OTel 初期化・メトリクス
@@ -166,25 +168,63 @@ dataguard ingest --daemon \
 ### REST API + Web UI
 
 ```bash
-dataguard serve --addr :8080 --db data/violations --api-key "$(gopass show -o infra/dataguard-rail/api-key)"
-# Open / ブラウザで http://localhost:8080/ （Authorization: Bearer <api-key> が必要）
-curl -H "Authorization: Bearer $API_KEY" http://localhost:8080/api/violations
+# API キーはファイル(推奨)または環境変数で渡す。引数 --api-key はプロセス一覧に見えるため非推奨。
+(umask 077; gopass show -o infra/dataguard-rail/api-key > ~/.config/dataguard/api-key)   # 例: 権限 0600 のファイル
+dataguard serve --db data/violations --api-key-file ~/.config/dataguard/api-key
+# または: DATAGUARD_API_KEY=... dataguard serve --db data/violations
+
+# Open / ブラウザで http://127.0.0.1:8080/ を開き、画面上部の「API キー」欄にキーを入力して適用
+# (キーはメモリ上にのみ保持され、localStorage 等には保存されません)
+curl -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8080/api/violations
 ```
 
-`--api-key` は必須。未指定のまま起動すると `serve` はエラーで終了する。
-意図的にローカル開発用途で無認証起動したい場合のみ `DATAGUARD_ALLOW_INSECURE=1` を設定する:
+`/health` は監視用に常に認証不要。`/`(ダッシュボードの HTML)はデータを含まない静的ページのため認証不要で、
+データは認証付きの `/api/*` から取得されます。
+
+Slack Webhook URL も同様に `--slack-webhook-file` または環境変数 `DATAGUARD_SLACK_WEBHOOK` で渡せます
+(`--slack-webhook` 引数は非推奨で、使うと警告ログを出します)。
+
+#### 既定値の強化（破壊的変更）
+
+| 項目 | 変更前 | 変更後 |
+|---|---|---|
+| `serve --addr` の既定 | `:8080`(全インタフェース) | `127.0.0.1:8080`(ループバックのみ) |
+| ループバック外へのバインド | 平文で起動できた | `--tls-cert`/`--tls-key` が必要。平文公開を意図する場合のみ `DATAGUARD_ALLOW_INSECURE=1` |
+| `/`(ダッシュボード HTML) | API キー設定時は認証が必要でブラウザから使えなかった | 認証不要(静的 HTML)。画面のキー入力欄から `/api` へ Bearer を付与 |
+
+ループバック外に公開する場合は TLS を有効にします:
 
 ```bash
-DATAGUARD_ALLOW_INSECURE=1 dataguard serve --addr :8080 --db data/violations
+dataguard serve --addr 0.0.0.0:8443 --tls-cert server.crt --tls-key server.key \
+  --api-key-file ~/.config/dataguard/api-key
 ```
 
-`/health` は監視用に常に認証不要。
+API キー未設定での起動は従来どおり拒否されます。意図的にローカル開発用途で無認証起動したい場合のみ
+`DATAGUARD_ALLOW_INSECURE=1` を設定します(ループバック外の平文公開の opt-in も兼ねます):
+
+```bash
+DATAGUARD_ALLOW_INSECURE=1 dataguard serve --db data/violations
+```
 
 ### SQL Lineage Analysis / SQL リネージュ解析
 
 ```bash
 dataguard-engine analyze --sql examples/sample.sql --out lineage.json
 ```
+
+`--sql` は手元の CLI 用で、ファイルが無い場合は文字列自体を SQL として解析します。
+他のプロセスから呼び出す場合は、ファイルのみを受け付ける `--sql-file=<path>`
+(ファイルが無ければエラー。`--sql` と排他)を使ってください。
+
+#### `/api/lineage` の入力パスの限定(破壊的変更)
+
+`dataguard serve --sql-dir <dir>`(既定: カレントディレクトリ)配下の `.sql` ファイルだけを受け付けます。
+`sql` パラメータは基準ディレクトリと結合後にシンボリックリンクを解決し、配下であることを確認します。
+範囲外・存在しないパス・先頭が `-` のパス・`.sql` 以外は一律 `400` で拒否されます
+(サーバー経由では、ファイルが無い場合に文字列を SQL として解析することはありません)。
+解析のサブプロセスは同時 4 件までで、超えると `429` を返します。
+エラー応答は固定文言のみで、詳細はサーバーのログに出力されます。
+`--grpc-addr` を使う場合、Rust エンジン側の `--base-dir` は `--sql-dir` と同じディレクトリにしてください。
 
 ### CSV Quality Check / CSV 品質チェック
 
@@ -218,7 +258,7 @@ cd go-ingestion && go test ./...
 | GET | `/` | Dashboard (Web UI) / violations & schema-diff ダッシュボード |
 | GET | `/health` | Health check / ヘルスチェック |
 | GET | `/api/violations` | List violations (`?table=xxx`) / 違反一覧 |
-| GET | `/api/lineage` | Get lineage (`?sql=path`) / リネージュ取得 |
+| GET | `/api/lineage` | Get lineage (`?sql=path`, under `--sql-dir`) / リネージュ取得 |
 | GET | `/api/schema-diff` | Schema diff (`?table=xxx`) / スキーマ差分 |
 
 ## Quality Rules / 品質ルール定義例 (`rules.yaml`)
