@@ -8,6 +8,8 @@ mod profile;
 #[cfg(test)]
 #[path = "serve_tls_test.rs"]
 mod serve_tls_test;
+#[cfg(test)]
+mod test_util;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
