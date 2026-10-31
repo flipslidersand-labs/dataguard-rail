@@ -25,9 +25,9 @@ func TestSaveAndListViolations(t *testing.T) {
 		t.Fatalf("SaveViolations: %v", err)
 	}
 
-	got, err := s.ListViolationsPaged(0, 0)
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolationsPaged: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != 3 {
 		t.Fatalf("want 3 violations, got %d", len(got))
@@ -63,25 +63,25 @@ func TestListAndCountViolationsByTable(t *testing.T) {
 		t.Fatalf("SaveViolations: %v", err)
 	}
 
-	count, err := s.CountViolationsByTable("products")
+	count, err := s.CountViolationsFor("products")
 	if err != nil {
-		t.Fatalf("CountViolationsByTable: %v", err)
+		t.Fatalf("CountViolationsFor: %v", err)
 	}
 	if count != 3 {
 		t.Errorf("want 3 products violations, got %d", count)
 	}
 
-	if count, err := s.CountViolationsByTable("stock"); err != nil || count != 1 {
+	if count, err := s.CountViolationsFor("stock"); err != nil || count != 1 {
 		t.Errorf("want 1 stock violation, got %d (err=%v)", count, err)
 	}
 
-	if count, err := s.CountViolationsByTable("nonexistent"); err != nil || count != 0 {
+	if count, err := s.CountViolationsFor("nonexistent"); err != nil || count != 0 {
 		t.Errorf("want 0 for nonexistent table, got %d (err=%v)", count, err)
 	}
 
-	page, err := s.ListViolationsByTablePaged("products", 2, 1)
+	page, err := s.ListViolationsFor("products", 2, 1)
 	if err != nil {
-		t.Fatalf("ListViolationsByTablePaged: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(page) != 2 {
 		t.Fatalf("want 2 violations in page, got %d", len(page))
@@ -115,9 +115,9 @@ func TestSaveViolationsLargeBatch(t *testing.T) {
 	if err := s.SaveViolations(vs); err != nil {
 		t.Fatalf("SaveViolations: %v", err)
 	}
-	got, err := s.ListViolationsPaged(0, 0)
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolationsPaged: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != n {
 		t.Fatalf("want %d violations, got %d", n, len(got))
@@ -131,9 +131,9 @@ func TestListEmpty(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.ListViolationsPaged(0, 0)
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolationsPaged: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("want 0, got %d", len(got))
