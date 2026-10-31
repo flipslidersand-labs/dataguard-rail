@@ -57,6 +57,26 @@ fn resolve_in_base(
     Ok(resolved)
 }
 
+/// `spawn_blocking` ハンドルをサーバー側タイムアウト付きで待ち、結果を `Status` に写す。
+/// タイムアウトと JoinError（パニック/キャンセル）の分岐をテストから注入できるよう
+/// ハンドラ本体から切り出している。`op` はエラーメッセージ用の RPC 名。
+#[allow(clippy::result_large_err)]
+async fn await_blocking(
+    op: &str,
+    timeout: Duration,
+    handle: tokio::task::JoinHandle<Result<String, Status>>,
+) -> Result<String, Status> {
+    match tokio::time::timeout(timeout, handle).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(join_err)) => Err(Status::internal(format!(
+            "{op} の内部タスクが異常終了しました: {join_err}"
+        ))),
+        Err(_elapsed) => Err(Status::deadline_exceeded(format!(
+            "{op} が {timeout:?} 以内に完了しませんでした"
+        ))),
+    }
+}
+
 pub struct DataGuardService {
     /// canonicalize 済みの基準ディレクトリ。RPC が読むファイルはこの配下に限る。
     base_dir: std::path::PathBuf,
@@ -98,16 +118,8 @@ impl DataGuard for DataGuardService {
         // spawn_blocking の完了は待ち続けても中断できないため（tokioはブロッキング
         // スレッドを強制終了できない）、サーバー側にも上限時間を設けクライアントの
         // タイムアウト後にCPU/IOを無期限消費し続けるのを防ぐ。
-        match tokio::time::timeout(SERVER_SIDE_TIMEOUT, handle).await {
-            Ok(Ok(Ok(lineage_json))) => Ok(Response::new(AnalyzeResponse { lineage_json })),
-            Ok(Ok(Err(status))) => Err(status),
-            Ok(Err(join_err)) => Err(Status::internal(format!(
-                "analyze の内部タスクが異常終了しました: {join_err}"
-            ))),
-            Err(_elapsed) => Err(Status::deadline_exceeded(format!(
-                "analyze が {SERVER_SIDE_TIMEOUT:?} 以内に完了しませんでした"
-            ))),
-        }
+        let lineage_json = await_blocking("analyze", SERVER_SIDE_TIMEOUT, handle).await?;
+        Ok(Response::new(AnalyzeResponse { lineage_json }))
     }
 
     async fn check(
@@ -133,16 +145,8 @@ impl DataGuard for DataGuardService {
             serde_json::to_string(&violations).map_err(|e| Status::internal(e.to_string()))
         });
 
-        match tokio::time::timeout(SERVER_SIDE_TIMEOUT, handle).await {
-            Ok(Ok(Ok(violations_json))) => Ok(Response::new(CheckResponse { violations_json })),
-            Ok(Ok(Err(status))) => Err(status),
-            Ok(Err(join_err)) => Err(Status::internal(format!(
-                "check の内部タスクが異常終了しました: {join_err}"
-            ))),
-            Err(_elapsed) => Err(Status::deadline_exceeded(format!(
-                "check が {SERVER_SIDE_TIMEOUT:?} 以内に完了しませんでした"
-            ))),
-        }
+        let violations_json = await_blocking("check", SERVER_SIDE_TIMEOUT, handle).await?;
+        Ok(Response::new(CheckResponse { violations_json }))
     }
 }
 
@@ -359,5 +363,47 @@ mod tests {
             .await
             .expect_err("traversal should be rejected");
         assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn await_blocking_passes_through_ok_and_status() {
+        let ok = tokio::spawn(async { Ok("done".to_string()) });
+        assert_eq!(
+            await_blocking("op", Duration::from_secs(60), ok)
+                .await
+                .unwrap(),
+            "done"
+        );
+        let st = tokio::spawn(async { Err(Status::invalid_argument("bad")) });
+        let err = await_blocking("op", Duration::from_secs(60), st)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    /// 完了しないタスク（永久 pending）を注入するので、タイムアウト値の大小に依存せず
+    /// 必ず deadline_exceeded 分岐に入る。
+    #[tokio::test]
+    async fn await_blocking_times_out_with_deadline_exceeded() {
+        let never = tokio::spawn(std::future::pending::<Result<String, Status>>());
+        let err = await_blocking("analyze", Duration::from_millis(1), never)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::DeadlineExceeded);
+        assert!(err.message().contains("analyze"), "{}", err.message());
+    }
+
+    /// パニックするタスクを注入して JoinError 分岐を通す。
+    #[tokio::test]
+    async fn await_blocking_maps_join_error_to_internal() {
+        let boom = tokio::task::spawn_blocking(|| -> Result<String, Status> {
+            panic!("injected panic");
+        });
+        let err = await_blocking("check", Duration::from_secs(60), boom)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Internal);
+        assert!(err.message().contains("異常終了"), "{}", err.message());
+        assert!(err.message().contains("check"), "{}", err.message());
     }
 }

@@ -26,17 +26,18 @@ type fakeStore struct {
 	listDiffsErr error
 }
 
-func (f *fakeStore) CountViolations() (int, error) { return len(f.violations), nil }
-func (f *fakeStore) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
-	return pageViolations(f.violations, limit, offset), nil
-}
-func (f *fakeStore) CountViolationsByTable(table string) (int, error) {
+func (f *fakeStore) CountViolationsFor(table string) (int, error) {
 	return len(f.violationsByTable(table)), nil
 }
-func (f *fakeStore) ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error) {
+func (f *fakeStore) ListViolationsFor(table string, limit, offset int) ([]engine.Violation, error) {
 	return pageViolations(f.violationsByTable(table), limit, offset), nil
 }
+
+// violationsByTable は table が空文字なら全件、そうでなければ該当 table のみを返す。
 func (f *fakeStore) violationsByTable(table string) []engine.Violation {
+	if table == "" {
+		return f.violations
+	}
 	matched := make([]engine.Violation, 0)
 	for _, v := range f.violations {
 		if v.Table == table {
