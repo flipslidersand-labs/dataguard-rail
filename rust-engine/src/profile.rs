@@ -179,27 +179,11 @@ mod tests {
         build_report(h, r, "test".to_string(), "T")
     }
 
-    /// テスト用に一意なパスへ内容を書き込む (tempfile crate に依存しない簡易実装)。
-    fn write_temp(name: &str, content: &str) -> String {
-        let path = std::env::temp_dir().join(format!(
-            "dataguard-profile-test-{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            name
-        ));
-        std::fs::write(&path, content).unwrap();
-        path.to_str().unwrap().to_string()
-    }
-
     #[test]
     fn profile_file_streams_same_result_as_build_report() {
         let csv = "id,score\n1,90\n2,\n3,80\n";
-        let path = write_temp("input.csv", csv);
-        let got = profile_file(&path, "T").unwrap();
-        std::fs::remove_file(&path).ok();
+        let file = crate::test_util::write_temp(".csv", csv);
+        let got = profile_file(file.path().to_str().unwrap(), "T").unwrap();
 
         assert_eq!(got.row_count, 3);
         let score = got.columns.iter().find(|c| c.name == "score").unwrap();
