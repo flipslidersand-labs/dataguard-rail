@@ -187,6 +187,34 @@ func tableKeyPrefix(table string) []byte {
 	return []byte(fmt.Sprintf("%s%s:", keyPrefix, table))
 }
 
+// violationPrefix は table 指定のキー範囲を返す。空文字は全 table (keyPrefix)。
+// 既存の tableKeyPrefix("") (= `violation::`) とは意味が異なるため、For 系メソッド専用。
+func violationPrefix(table string) []byte {
+	if table == "" {
+		return []byte(keyPrefix)
+	}
+	return tableKeyPrefix(table)
+}
+
+// CountViolationsFor は table の violation 件数を返す。table が空文字なら全件。
+func (s *Store) CountViolationsFor(table string) (int, error) {
+	count, err := s.countByPrefix(violationPrefix(table))
+	if err != nil {
+		return 0, fmt.Errorf("count violations: %w", err)
+	}
+	return count, nil
+}
+
+// ListViolationsFor は table の violation を offset から最大 limit 件返す。
+// table が空文字なら全件が対象。limit <= 0 は制限なし。
+func (s *Store) ListViolationsFor(table string, limit, offset int) ([]engine.Violation, error) {
+	out, err := s.listPagedByPrefix(violationPrefix(table), limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list violations: %w", err)
+	}
+	return out, nil
+}
+
 // CountViolations は保存済みの violation 件数をキーオンリースキャンで返す。
 func (s *Store) CountViolations() (int, error) {
 	count, err := s.countByPrefix([]byte(keyPrefix))
