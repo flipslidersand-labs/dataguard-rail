@@ -10,7 +10,6 @@
 | シリアライズ | serde + serde_json | 1          |
 | エラー       | anyhow             | 1          |
 | CLI          | clap (derive)      | 4          |
-| ベンチマーク | criterion          | 0.5        |
 
 ## Go Ingestion
 
