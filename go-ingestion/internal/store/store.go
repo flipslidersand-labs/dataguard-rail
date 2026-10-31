@@ -88,9 +88,12 @@ const txnBatchSize = 1000
 
 // SaveViolations は violations をバッチトランザクションで保存する。
 // txnBatchSize 件ごと、または ErrTxnTooBig 発生時に commit & 再開する。
+// 空のトランザクションに対しても ErrTxnTooBig になる (= 1 件で上限を超える)
+// レコードは再試行しても成功しないため、無限ループせずエラーを返す。
 func (s *Store) SaveViolations(violations []engine.Violation) error {
 	txn := s.db.NewTransaction(true)
 	committed := 0
+	pending := 0 // 現在の txn に積んだ件数
 	for i, v := range violations {
 		data, err := json.Marshal(v)
 		if err != nil {
@@ -98,19 +101,22 @@ func (s *Store) SaveViolations(violations []engine.Violation) error {
 			return fmt.Errorf("marshal violation %s: %w", v.ID, err)
 		}
 
-	retry:
-		if err := txn.Set(key(v), data); err != nil {
-			if err == badger.ErrTxnTooBig {
-				if commitErr := txn.Commit(); commitErr != nil {
-					return fmt.Errorf("commit batch at index %d: %w", committed, commitErr)
-				}
-				committed = i
-				txn = s.db.NewTransaction(true)
-				goto retry
+		err = txn.Set(key(v), data)
+		if errors.Is(err, badger.ErrTxnTooBig) && pending > 0 {
+			// 積み済み分を commit し、空の txn で同じレコードを 1 回だけ再試行する。
+			if commitErr := txn.Commit(); commitErr != nil {
+				return fmt.Errorf("commit batch at index %d: %w", committed, commitErr)
 			}
-			txn.Discard()
-			return fmt.Errorf("set violation %s: %w", v.ID, err)
+			committed = i
+			pending = 0
+			txn = s.db.NewTransaction(true)
+			err = txn.Set(key(v), data)
 		}
+		if err != nil {
+			txn.Discard()
+			return fmt.Errorf("set violation %s (%d bytes): %w", v.ID, len(data), err)
+		}
+		pending++
 
 		// バッチサイズに達したら commit して新しいトランザクションを開始する。
 		if (i+1)%txnBatchSize == 0 {
@@ -118,6 +124,7 @@ func (s *Store) SaveViolations(violations []engine.Violation) error {
 				return fmt.Errorf("commit batch at index %d: %w", i, commitErr)
 			}
 			committed = i + 1
+			pending = 0
 			txn = s.db.NewTransaction(true)
 		}
 	}
