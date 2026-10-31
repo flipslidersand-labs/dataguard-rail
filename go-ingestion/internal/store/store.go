@@ -182,13 +182,12 @@ func (s *Store) listPagedByPrefix(prefix []byte, limit, offset int) ([]engine.Vi
 // tableKeyPrefix は table 単位の violation キープレフィックスを組み立てる
 // (`violation:<table>:`)。key() が既に `violation:<table>:<id>` の形式で
 // 保存しているため、table フィルタは追加インデックス無しで prefix scan だけで済む。
-// 注意: table が空文字だと `violation::` となり、全件用の keyPrefix (`violation:`) とは別物。
 func tableKeyPrefix(table string) []byte {
 	return []byte(fmt.Sprintf("%s%s:", keyPrefix, table))
 }
 
 // violationPrefix は table 指定のキー範囲を返す。空文字は全 table (keyPrefix)。
-// 既存の tableKeyPrefix("") (= `violation::`) とは意味が異なるため、For 系メソッド専用。
+// tableKeyPrefix("") (= `violation::`) とは別物なので、空文字はここで明示的に分岐する。
 func violationPrefix(table string) []byte {
 	if table == "" {
 		return []byte(keyPrefix)
@@ -211,44 +210,6 @@ func (s *Store) ListViolationsFor(table string, limit, offset int) ([]engine.Vio
 	out, err := s.listPagedByPrefix(violationPrefix(table), limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list violations: %w", err)
-	}
-	return out, nil
-}
-
-// CountViolations は保存済みの violation 件数をキーオンリースキャンで返す。
-func (s *Store) CountViolations() (int, error) {
-	count, err := s.countByPrefix([]byte(keyPrefix))
-	if err != nil {
-		return 0, fmt.Errorf("count violations: %w", err)
-	}
-	return count, nil
-}
-
-// CountViolationsByTable は指定 table の violation 件数をキーオンリースキャンで返す。
-func (s *Store) CountViolationsByTable(table string) (int, error) {
-	count, err := s.countByPrefix(tableKeyPrefix(table))
-	if err != nil {
-		return 0, fmt.Errorf("count violations by table: %w", err)
-	}
-	return count, nil
-}
-
-// ListViolationsByTablePaged は指定 table に絞った violation を offset から
-// 最大 limit 件返す。limit <= 0 は制限なし。
-func (s *Store) ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error) {
-	out, err := s.listPagedByPrefix(tableKeyPrefix(table), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list violations by table paged: %w", err)
-	}
-	return out, nil
-}
-
-// ListViolationsPaged は offset から最大 limit 件の violation を返す。
-// limit <= 0 は制限なし。
-func (s *Store) ListViolationsPaged(limit, offset int) ([]engine.Violation, error) {
-	out, err := s.listPagedByPrefix([]byte(keyPrefix), limit, offset)
-	if err != nil {
-		return nil, fmt.Errorf("list violations paged: %w", err)
 	}
 	return out, nil
 }
