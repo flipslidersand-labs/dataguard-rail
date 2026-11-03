@@ -382,33 +382,21 @@ mod tests {
             .collect()
     }
 
-    /// テスト用に一意なパスへ内容を書き込む (tempfile crate に依存しない簡易実装)。
-    fn write_temp(name: &str, content: &str) -> String {
-        let path = std::env::temp_dir().join(format!(
-            "dataguard-check-test-{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            name
-        ));
-        std::fs::write(&path, content).unwrap();
-        path.to_str().unwrap().to_string()
-    }
-
     #[test]
     fn check_file_streams_without_materializing_all_rows() {
         // count ルールを含む混在ルールセットで、check_file (ストリーミング) が
         // evaluate (インメモリ) と同じ違反を返すことを確認する。
         let csv = "sale_price,stock_id\n100,A\n-5,A\n0,B\n";
         let rules = "rules:\n  - name: positive_price\n    column: sale_price\n    expression: \"value > 0\"\n  - name: no_dup_stock\n    key: stock_id\n    expression: \"count <= 1\"\n";
-        let csv_path = write_temp("input.csv", csv);
-        let rules_path = write_temp("rules.yaml", rules);
+        let csv_file = crate::test_util::write_temp(".csv", csv);
+        let rules_file = crate::test_util::write_temp(".yaml", rules);
 
-        let got = check_file(&csv_path, &rules_path, "T").unwrap();
-        std::fs::remove_file(&csv_path).ok();
-        std::fs::remove_file(&rules_path).ok();
+        let got = check_file(
+            csv_file.path().to_str().unwrap(),
+            rules_file.path().to_str().unwrap(),
+            "T",
+        )
+        .unwrap();
 
         // positive_price: row2(-5), row3(0) が違反 / no_dup_stock: A が2回出現するので row1,row2 が違反
         assert_eq!(got.len(), 4);
