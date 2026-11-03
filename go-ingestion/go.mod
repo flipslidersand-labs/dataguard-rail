@@ -1,4 +1,4 @@
-module github.com/flipslidersand/dataguard-rail
+module github.com/flipslidersand-labs/dataguard-rail
 
 go 1.26.0
 

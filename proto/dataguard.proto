@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package dataguard;
 
-option go_package = "github.com/flipslidersand/dataguard-rail/internal/pb";
+option go_package = "github.com/flipslidersand-labs/dataguard-rail/internal/pb";
 
 service DataGuard {
   rpc Analyze(AnalyzeRequest)  returns (AnalyzeResponse);
