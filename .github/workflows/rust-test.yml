@@ -8,7 +8,7 @@ on:
 
 jobs:
   rust-engine:
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/rust-test.yml@main
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/rust-test.yml@d33890a74113f8ba8d8841a55b290007f72852ef # qa-workflows main (#167)
     with:
       working-directory: rust-engine
       system-deps: protobuf-compiler # build.rs (tonic-build) が proto をコンパイルするため必要
