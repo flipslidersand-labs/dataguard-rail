@@ -9,7 +9,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"go.uber.org/zap"
 )
 
@@ -78,7 +78,7 @@ func (s *Store) RunGC(ctx context.Context, log *zap.Logger) {
 }
 
 // key は violation の一意キーを組み立てる。
-func key(v engine.Violation) []byte {
+func key(v model.Violation) []byte {
 	return []byte(fmt.Sprintf("%s%s:%s", keyPrefix, v.Table, v.ID))
 }
 
@@ -90,7 +90,7 @@ const txnBatchSize = 1000
 // txnBatchSize 件ごと、または ErrTxnTooBig 発生時に commit & 再開する。
 // 空のトランザクションに対しても ErrTxnTooBig になる (= 1 件で上限を超える)
 // レコードは再試行しても成功しないため、無限ループせずエラーを返す。
-func (s *Store) SaveViolations(violations []engine.Violation) error {
+func (s *Store) SaveViolations(violations []model.Violation) error {
 	txn := s.db.NewTransaction(true)
 	committed := 0
 	pending := 0 // 現在の txn に積んだ件数
@@ -149,8 +149,8 @@ func (s *Store) countByPrefix(prefix []byte) (int, error) {
 
 // listPagedByPrefix は prefix に一致する violation を offset から最大 limit 件返す。
 // limit <= 0 は制限なし。全件ロードせず prefix scan + skip/limit だけで完結する。
-func (s *Store) listPagedByPrefix(prefix []byte, limit, offset int) ([]engine.Violation, error) {
-	var out []engine.Violation
+func (s *Store) listPagedByPrefix(prefix []byte, limit, offset int) ([]model.Violation, error) {
+	var out []model.Violation
 	err := s.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
@@ -164,7 +164,7 @@ func (s *Store) listPagedByPrefix(prefix []byte, limit, offset int) ([]engine.Vi
 				break
 			}
 			if err := it.Item().Value(func(val []byte) error {
-				var v engine.Violation
+				var v model.Violation
 				if err := json.Unmarshal(val, &v); err != nil {
 					return err
 				}
@@ -206,7 +206,7 @@ func (s *Store) CountViolationsFor(table string) (int, error) {
 
 // ListViolationsFor は table の violation を offset から最大 limit 件返す。
 // table が空文字なら全件が対象。limit <= 0 は制限なし。
-func (s *Store) ListViolationsFor(table string, limit, offset int) ([]engine.Violation, error) {
+func (s *Store) ListViolationsFor(table string, limit, offset int) ([]model.Violation, error) {
 	out, err := s.listPagedByPrefix(violationPrefix(table), limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list violations: %w", err)
