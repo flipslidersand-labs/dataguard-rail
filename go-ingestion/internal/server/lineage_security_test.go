@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/store"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -225,7 +225,7 @@ func (errStore) LatestDiff(string) (*store.SchemaDiff, error) {
 	return nil, errLeaky
 }
 func (errStore) ListDiffs() ([]store.SchemaDiff, error) { return nil, errLeaky }
-func (errStore) ListViolationsFor(string, int, int) ([]engine.Violation, error) {
+func (errStore) ListViolationsFor(string, int, int) ([]model.Violation, error) {
 	return nil, errLeaky
 }
 

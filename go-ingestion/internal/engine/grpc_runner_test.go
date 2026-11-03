@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -118,7 +119,7 @@ func TestGrpcRunnerCheckSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	want := Violation{ID: "v1", Rule: "positive_price", Table: "products", Row: 2,
+	want := model.Violation{ID: "v1", Rule: "positive_price", Table: "products", Row: 2,
 		Column: "sale_price", Value: "-5", DetectedAt: "2026-10-31T00:00:00Z"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("violations = %+v, want [%+v]", got, want)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -164,7 +165,7 @@ func (g *GrpcRunner) Analyze(ctx context.Context, sqlPath string) (json.RawMessa
 }
 
 // Check は Rust engine の check RPC を呼び出し、violations を返す。
-func (g *GrpcRunner) Check(ctx context.Context, csvPath, rulesPath string) ([]Violation, error) {
+func (g *GrpcRunner) Check(ctx context.Context, csvPath, rulesPath string) ([]model.Violation, error) {
 	ctx, cancel := withDefaultTimeout(ctx)
 	defer cancel()
 	resp, err := g.client.Check(ctx, &pb.CheckRequest{
@@ -174,7 +175,7 @@ func (g *GrpcRunner) Check(ctx context.Context, csvPath, rulesPath string) ([]Vi
 	if err != nil {
 		return nil, fmt.Errorf("grpc Check: %w", err)
 	}
-	var vs []Violation
+	var vs []model.Violation
 	if err := json.Unmarshal([]byte(resp.ViolationsJson), &vs); err != nil {
 		return nil, fmt.Errorf("unmarshal violations: %w", err)
 	}

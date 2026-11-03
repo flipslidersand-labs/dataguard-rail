@@ -8,7 +8,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 )
 
 // maxBatchSize は MemTableSize=1MiB のときの badger の txn 上限 (15%)。
@@ -32,7 +32,7 @@ func TestSaveViolationsSingleRecordExceedsTxnLimit(t *testing.T) {
 
 	// JSON 化後の value が threshold-1 (inline のまま) になるよう調整する。
 	// value は上限未満だが key 分が加わるため、空の txn でも ErrTxnTooBig になる。
-	huge := engine.Violation{ID: "huge", Rule: "r", Table: "t"}
+	huge := model.Violation{ID: "huge", Rule: "r", Table: "t"}
 	base, _ := json.Marshal(huge)
 	huge.Value = strings.Repeat("x", maxBatchSize-1-len(base))
 
@@ -44,7 +44,7 @@ func TestSaveViolationsSingleRecordExceedsTxnLimit(t *testing.T) {
 	}
 	txn.Discard()
 
-	vs := []engine.Violation{
+	vs := []model.Violation{
 		{ID: "small-1", Rule: "r", Table: "t", Value: "ok"},
 		huge,
 		{ID: "small-2", Rule: "r", Table: "t", Value: "ok"},

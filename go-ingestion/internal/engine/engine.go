@@ -10,22 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 )
 
 // DefaultBin は bin 未指定時の既定値。絶対パスでないため New() に渡すとエラーになる。
 // 呼び出し元はインストール先の絶対パス (例: "/usr/local/bin/dataguard-engine") を指定すること。
 const DefaultBin = "dataguard-engine"
-
-// Violation は check の出力 (Rust 側 data-model.md の Violation に一致)。
-type Violation struct {
-	ID         string `json:"id"`
-	Rule       string `json:"rule"`
-	Table      string `json:"table"`
-	Row        int    `json:"row"`
-	Column     string `json:"column"`
-	Value      string `json:"value"`
-	DetectedAt string `json:"detected_at"`
-}
 
 // Runner は dataguard-engine の実行者。
 type Runner struct {
@@ -45,12 +36,12 @@ func New(bin string) *Runner {
 
 // Check は `dataguard-engine check --input <csv> --rules <yaml> --out -` を実行し、
 // stdout の violations JSON をパースして返す。
-func (r *Runner) Check(ctx context.Context, inputCSV, rulesPath string) ([]Violation, error) {
+func (r *Runner) Check(ctx context.Context, inputCSV, rulesPath string) ([]model.Violation, error) {
 	out, err := r.run(ctx, "check", "--input", inputCSV, "--rules", rulesPath, "--out", "-")
 	if err != nil {
 		return nil, err
 	}
-	var violations []Violation
+	var violations []model.Violation
 	if err := json.Unmarshal(out, &violations); err != nil {
 		return nil, fmt.Errorf("parse violations json: %w", err)
 	}

@@ -9,20 +9,20 @@ import (
 
 	"github.com/flipslidersand-labs/dataguard-rail/internal/alert"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/ingester"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/telemetry"
 	"go.uber.org/zap"
 )
 
 // Checker は品質チェックの実行者 (engine.Runner が満たす)。テストで差し替え可能。
 type Checker interface {
-	Check(ctx context.Context, inputCSV, rulesPath string) ([]engine.Violation, error)
+	Check(ctx context.Context, inputCSV, rulesPath string) ([]model.Violation, error)
 }
 
 // Saver は violations の永続化先 (store.Store が満たす)。
 type Saver interface {
-	SaveViolations([]engine.Violation) error
+	SaveViolations([]model.Violation) error
 }
 
 // Loader は DataSource を Dataset に読み込む。DB 接続を伴う postgres を

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 )
 
 // TestViolationKeyRanges は CountViolationsFor / ListViolationsFor が走査するキー範囲を、
@@ -21,7 +21,7 @@ func TestViolationKeyRanges(t *testing.T) {
 	}
 	defer s.Close()
 
-	in := []engine.Violation{
+	in := []model.Violation{
 		{ID: "v1", Table: "a"},
 		{ID: "v2", Table: "a"},
 		{ID: "v1", Table: "ab"},
