@@ -46,6 +46,27 @@ func addGrpcTLSFlags(f *pflag.FlagSet, tlsCfg *engine.GrpcTLSConfig) {
 	f.BoolVar(&tlsCfg.Insecure, "grpc-insecure", false, "ループバック外でも TLS なし平文通信を明示的に許可する（非推奨）")
 }
 
+// engineRunner は ingest/daemon が使う Check と serve が使う Analyze の両方を満たす。
+type engineRunner interface {
+	pipeline.Checker
+	server.Runner
+}
+
+// newEngineRunner は grpcAddr 指定時は gRPC、未指定時は exec の runner を返す。
+// 返す close は呼び出し側で defer する。sqlDir は exec の Analyze 作業ディレクトリ（空可）。
+func newEngineRunner(grpcAddr string, grpcTLS engine.GrpcTLSConfig, engineBin, sqlDir string) (engineRunner, func(), error) {
+	if grpcAddr != "" {
+		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
+		if err != nil {
+			return nil, nil, err
+		}
+		return gr, func() { _ = gr.Close() }, nil
+	}
+	er := engine.New(engineBin)
+	er.SQLDir = sqlDir
+	return er, func() {}, nil
+}
+
 // resolveSlackWebhook は --slack-webhook / --slack-webhook-file / 環境変数から Webhook URL を解決する。
 func resolveSlackWebhook(cmd *cobra.Command) (string, error) {
 	arg, _ := cmd.Root().PersistentFlags().GetString("slack-webhook")
@@ -131,17 +152,11 @@ func runIngest(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	}
 	defer st.Close()
 
-	var runner pipeline.Checker
-	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
-		if err != nil {
-			return err
-		}
-		defer gr.Close()
-		runner = gr
-	} else {
-		runner = engine.New(engineBin)
+	runner, closeRunner, err := newEngineRunner(grpcAddr, grpcTLS, engineBin, "")
+	if err != nil {
+		return err
 	}
+	defer closeRunner()
 
 	results, err := pipeline.Run(ctx, cfg, rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log)
 
@@ -195,17 +210,11 @@ func runDaemon(configPath, rulesPath, dbPath, engineBin, grpcAddr, tmpDir, otelE
 	// ingest の単発実行では不要なのでここでのみ起動する。
 	go st.RunGC(ctx, log)
 
-	var runner pipeline.Checker
-	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
-		if err != nil {
-			return err
-		}
-		defer gr.Close()
-		runner = gr
-	} else {
-		runner = engine.New(engineBin)
+	runner, closeRunner, err := newEngineRunner(grpcAddr, grpcTLS, engineBin, "")
+	if err != nil {
+		return err
 	}
+	defer closeRunner()
 
 	jobRunner := scheduler.BuildRunner(rulesPath, td, pipeline.DefaultLoader{}, runner, st, notifier, log)
 
@@ -361,19 +370,11 @@ func runServe(addr, dbPath, engineBin, grpcAddr, otelEndpoint, slackWebhook, api
 		return fmt.Errorf("--sql-dir %q はディレクトリとして存在しません", sqlDir)
 	}
 
-	var runner server.Runner
-	if grpcAddr != "" {
-		gr, err := engine.NewGrpc(grpcAddr, grpcTLS)
-		if err != nil {
-			return err
-		}
-		defer gr.Close()
-		runner = gr
-	} else {
-		er := engine.New(engineBin)
-		er.SQLDir = absSQLDir
-		runner = er
+	runner, closeRunner, err := newEngineRunner(grpcAddr, grpcTLS, engineBin, absSQLDir)
+	if err != nil {
+		return err
 	}
+	defer closeRunner()
 
 	notifier := alert.NewSlack(slackWebhook)
 	srv := server.New(st, runner, notifier, apiKey, log, server.WithSQLDir(absSQLDir))
