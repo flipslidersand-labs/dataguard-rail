@@ -8,7 +8,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 )
 
 // maxBatchSize は MemTableSize=1MiB のときの badger の txn 上限 (15%)。
