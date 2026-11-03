@@ -25,9 +25,9 @@ func TestSaveAndListViolations(t *testing.T) {
 		t.Fatalf("SaveViolations: %v", err)
 	}
 
-	got, err := s.ListViolations()
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolations: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != 3 {
 		t.Fatalf("want 3 violations, got %d", len(got))
@@ -63,25 +63,25 @@ func TestListAndCountViolationsByTable(t *testing.T) {
 		t.Fatalf("SaveViolations: %v", err)
 	}
 
-	count, err := s.CountViolationsByTable("products")
+	count, err := s.CountViolationsFor("products")
 	if err != nil {
-		t.Fatalf("CountViolationsByTable: %v", err)
+		t.Fatalf("CountViolationsFor: %v", err)
 	}
 	if count != 3 {
 		t.Errorf("want 3 products violations, got %d", count)
 	}
 
-	if count, err := s.CountViolationsByTable("stock"); err != nil || count != 1 {
+	if count, err := s.CountViolationsFor("stock"); err != nil || count != 1 {
 		t.Errorf("want 1 stock violation, got %d (err=%v)", count, err)
 	}
 
-	if count, err := s.CountViolationsByTable("nonexistent"); err != nil || count != 0 {
+	if count, err := s.CountViolationsFor("nonexistent"); err != nil || count != 0 {
 		t.Errorf("want 0 for nonexistent table, got %d (err=%v)", count, err)
 	}
 
-	page, err := s.ListViolationsByTablePaged("products", 2, 1)
+	page, err := s.ListViolationsFor("products", 2, 1)
 	if err != nil {
-		t.Fatalf("ListViolationsByTablePaged: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(page) != 2 {
 		t.Fatalf("want 2 violations in page, got %d", len(page))
@@ -115,9 +115,9 @@ func TestSaveViolationsLargeBatch(t *testing.T) {
 	if err := s.SaveViolations(vs); err != nil {
 		t.Fatalf("SaveViolations: %v", err)
 	}
-	got, err := s.ListViolations()
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolations: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != n {
 		t.Fatalf("want %d violations, got %d", n, len(got))
@@ -131,54 +131,12 @@ func TestListEmpty(t *testing.T) {
 	}
 	defer s.Close()
 
-	got, err := s.ListViolations()
+	got, err := s.ListViolationsFor("", 0, 0)
 	if err != nil {
-		t.Fatalf("ListViolations: %v", err)
+		t.Fatalf("ListViolationsFor: %v", err)
 	}
 	if len(got) != 0 {
 		t.Errorf("want 0, got %d", len(got))
-	}
-}
-
-// TestListViolationsExceedsLimitErrors は保存件数が maxListViolations を超える場合、
-// ListViolations が全件メモリ展開を避けてエラーを返すことを確認する
-// (呼び出し元は ListViolationsPaged を使うべきことを示す)。
-func TestListViolationsExceedsLimitErrors(t *testing.T) {
-	orig := maxListViolations
-	maxListViolations = 5
-	defer func() { maxListViolations = orig }()
-
-	s, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("Open: %v", err)
-	}
-	defer s.Close()
-
-	vs := make([]engine.Violation, maxListViolations+1)
-	for i := range vs {
-		vs[i] = engine.Violation{ID: fmt.Sprintf("v%d", i), Rule: "r", Table: "t"}
-	}
-	if err := s.SaveViolations(vs); err != nil {
-		t.Fatalf("SaveViolations: %v", err)
-	}
-
-	if _, err := s.ListViolations(); err == nil {
-		t.Fatal("want error when violation count exceeds maxListViolations, got nil")
-	}
-
-	// 上限以下ならこれまで通り成功する。
-	if err := s.db.DropAll(); err != nil {
-		t.Fatalf("DropAll: %v", err)
-	}
-	if err := s.SaveViolations(vs[:maxListViolations]); err != nil {
-		t.Fatalf("SaveViolations: %v", err)
-	}
-	got, err := s.ListViolations()
-	if err != nil {
-		t.Fatalf("ListViolations: %v", err)
-	}
-	if len(got) != maxListViolations {
-		t.Fatalf("want %d violations, got %d", maxListViolations, len(got))
 	}
 }
 
