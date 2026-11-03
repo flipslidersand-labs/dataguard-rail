@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flipslidersand/dataguard-rail/internal/alert"
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
-	"github.com/flipslidersand/dataguard-rail/internal/store"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/alert"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
