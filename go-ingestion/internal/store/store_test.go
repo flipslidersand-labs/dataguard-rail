@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 )
 
 func TestSaveAndListViolations(t *testing.T) {
@@ -16,7 +16,7 @@ func TestSaveAndListViolations(t *testing.T) {
 	}
 	defer s.Close()
 
-	in := []engine.Violation{
+	in := []model.Violation{
 		{ID: "viol-1", Rule: "positive_price", Table: "products", Row: 2, Column: "sale_price", Value: "-5"},
 		{ID: "viol-2", Rule: "no_null_email", Table: "products", Row: 3, Column: "email", Value: ""},
 		{ID: "viol-1", Rule: "count", Table: "stock", Row: 1, Column: "stock_id", Value: "A"},
@@ -53,7 +53,7 @@ func TestListAndCountViolationsByTable(t *testing.T) {
 	}
 	defer s.Close()
 
-	in := []engine.Violation{
+	in := []model.Violation{
 		{ID: "v1", Rule: "r", Table: "products", Row: 1},
 		{ID: "v2", Rule: "r", Table: "products", Row: 2},
 		{ID: "v3", Rule: "r", Table: "products", Row: 3},
@@ -103,9 +103,9 @@ func TestSaveViolationsLargeBatch(t *testing.T) {
 	defer s.Close()
 
 	n := txnBatchSize + 1
-	vs := make([]engine.Violation, n)
+	vs := make([]model.Violation, n)
 	for i := 0; i < n; i++ {
-		vs[i] = engine.Violation{
+		vs[i] = model.Violation{
 			ID:    fmt.Sprintf("v%d", i),
 			Rule:  "rule",
 			Table: "t",

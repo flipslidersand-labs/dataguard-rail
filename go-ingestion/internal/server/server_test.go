@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/store"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -19,7 +19,7 @@ import (
 
 // fakeStore はテスト用の Storer 実装。
 type fakeStore struct {
-	violations   []engine.Violation
+	violations   []model.Violation
 	diff         *store.SchemaDiff
 	diffs        []store.SchemaDiff
 	diffErr      error
@@ -29,16 +29,16 @@ type fakeStore struct {
 func (f *fakeStore) CountViolationsFor(table string) (int, error) {
 	return len(f.violationsByTable(table)), nil
 }
-func (f *fakeStore) ListViolationsFor(table string, limit, offset int) ([]engine.Violation, error) {
+func (f *fakeStore) ListViolationsFor(table string, limit, offset int) ([]model.Violation, error) {
 	return pageViolations(f.violationsByTable(table), limit, offset), nil
 }
 
 // violationsByTable は table が空文字なら全件、そうでなければ該当 table のみを返す。
-func (f *fakeStore) violationsByTable(table string) []engine.Violation {
+func (f *fakeStore) violationsByTable(table string) []model.Violation {
 	if table == "" {
 		return f.violations
 	}
-	matched := make([]engine.Violation, 0)
+	matched := make([]model.Violation, 0)
 	for _, v := range f.violations {
 		if v.Table == table {
 			matched = append(matched, v)
@@ -46,9 +46,9 @@ func (f *fakeStore) violationsByTable(table string) []engine.Violation {
 	}
 	return matched
 }
-func pageViolations(all []engine.Violation, limit, offset int) []engine.Violation {
+func pageViolations(all []model.Violation, limit, offset int) []model.Violation {
 	if offset >= len(all) {
-		return []engine.Violation{}
+		return []model.Violation{}
 	}
 	end := offset + limit
 	if limit <= 0 || end > len(all) {
@@ -86,7 +86,7 @@ func TestHealth(t *testing.T) {
 
 func TestViolationsAll(t *testing.T) {
 	st := &fakeStore{
-		violations: []engine.Violation{
+		violations: []model.Violation{
 			{ID: "v1", Table: "products", Rule: "r"},
 			{ID: "v2", Table: "orders", Rule: "r"},
 		},
@@ -98,7 +98,7 @@ func TestViolationsAll(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", w.Code)
 	}
-	var got []engine.Violation
+	var got []model.Violation
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestViolationsAll(t *testing.T) {
 
 func TestViolationsFilter(t *testing.T) {
 	st := &fakeStore{
-		violations: []engine.Violation{
+		violations: []model.Violation{
 			{ID: "v1", Table: "products"},
 			{ID: "v2", Table: "orders"},
 		},
@@ -118,7 +118,7 @@ func TestViolationsFilter(t *testing.T) {
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/violations?table=products", nil)
 	srv.Handler().ServeHTTP(w, req)
-	var got []engine.Violation
+	var got []model.Violation
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 1 || got[0].Table != "products" {
 		t.Errorf("unexpected filter result: %+v", got)
@@ -126,9 +126,9 @@ func TestViolationsFilter(t *testing.T) {
 }
 
 func TestViolationsPagination(t *testing.T) {
-	viols := make([]engine.Violation, 5)
+	viols := make([]model.Violation, 5)
 	for i := range viols {
-		viols[i] = engine.Violation{ID: fmt.Sprintf("v%d", i), Table: "t"}
+		viols[i] = model.Violation{ID: fmt.Sprintf("v%d", i), Table: "t"}
 	}
 	st := &fakeStore{violations: viols}
 	srv := newTestServer(st, &fakeRunner{})
@@ -143,7 +143,7 @@ func TestViolationsPagination(t *testing.T) {
 	if w.Header().Get("X-Total-Count") != "5" {
 		t.Errorf("X-Total-Count: want 5, got %s", w.Header().Get("X-Total-Count"))
 	}
-	var got []engine.Violation
+	var got []model.Violation
 	_ = json.Unmarshal(w.Body.Bytes(), &got)
 	if len(got) != 2 {
 		t.Errorf("want 2, got %d", len(got))
@@ -326,7 +326,7 @@ func TestAuthMissingToken(t *testing.T) {
 // ダッシュボードの HTML は静的でデータを含まないため、API キー設定時もキー入力欄を
 // 表示できるよう認証なしで配信する。データは認証付きの /api からのみ取得される。
 func TestDashboardHTMLServedWithoutKeyAndCarriesNoData(t *testing.T) {
-	st := &fakeStore{violations: []engine.Violation{{ID: "v-secret-marker", Table: "t", Rule: "r"}}}
+	st := &fakeStore{violations: []model.Violation{{ID: "v-secret-marker", Table: "t", Rule: "r"}}}
 	srv := newAuthedTestServer(st, &fakeRunner{}, "secret")
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/", nil)

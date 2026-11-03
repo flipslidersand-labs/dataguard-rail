@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
-	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 	"github.com/flipslidersand-labs/dataguard-rail/internal/ingester"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/model"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
@@ -17,17 +17,17 @@ import (
 // fakeChecker は与えられた CSV パスの存在を確認し、固定の violation を返す。
 type fakeChecker struct{ lastInput string }
 
-func (f *fakeChecker) Check(_ context.Context, inputCSV, _ string) ([]engine.Violation, error) {
+func (f *fakeChecker) Check(_ context.Context, inputCSV, _ string) ([]model.Violation, error) {
 	f.lastInput = inputCSV
 	if _, err := os.Stat(inputCSV); err != nil {
 		return nil, err
 	}
-	return []engine.Violation{{ID: "viol-1", Rule: "r", Table: "products", Row: 1, Column: "c", Value: "-1"}}, nil
+	return []model.Violation{{ID: "viol-1", Rule: "r", Table: "products", Row: 1, Column: "c", Value: "-1"}}, nil
 }
 
-type fakeSaver struct{ saved []engine.Violation }
+type fakeSaver struct{ saved []model.Violation }
 
-func (f *fakeSaver) SaveViolations(vs []engine.Violation) error {
+func (f *fakeSaver) SaveViolations(vs []model.Violation) error {
 	f.saved = append(f.saved, vs...)
 	return nil
 }
