@@ -25,36 +25,18 @@ func (s *Server) handleViolations(c *gin.Context) {
 
 	table := c.Query("table")
 
-	if table == "" {
-		total, err := s.store.CountViolations()
-		if err != nil {
-			s.internalError(c, "violations.count", err)
-			return
-		}
-		c.Header("X-Total-Count", strconv.Itoa(total))
-
-		violations, err := s.store.ListViolationsPaged(limit, offset)
-		if err != nil {
-			s.internalError(c, "violations.list", err)
-			return
-		}
-		c.JSON(http.StatusOK, violations)
-		return
-	}
-
-	// table フィルタ付き: BadgerDB のキーが `violation:<table>:<id>` 形式で
-	// 保存されているため、table ごとの prefix scan + ページングだけで完結し、
-	// 全件ロード・Go 側フィルタは不要（#99）。
-	total, err := s.store.CountViolationsByTable(table)
+	// table が空なら全件。BadgerDB のキーが `violation:<table>:<id>` 形式のため、
+	// table 指定時も prefix scan + ページングだけで完結する（#99）。
+	total, err := s.store.CountViolationsFor(table)
 	if err != nil {
-		s.internalError(c, "violations.count_by_table", err)
+		s.internalError(c, "violations.count", err)
 		return
 	}
 	c.Header("X-Total-Count", strconv.Itoa(total))
 
-	violations, err := s.store.ListViolationsByTablePaged(table, limit, offset)
+	violations, err := s.store.ListViolationsFor(table, limit, offset)
 	if err != nil {
-		s.internalError(c, "violations.list_by_table", err)
+		s.internalError(c, "violations.list", err)
 		return
 	}
 	c.JSON(http.StatusOK, violations)

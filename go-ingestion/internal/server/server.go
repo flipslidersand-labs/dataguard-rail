@@ -18,10 +18,9 @@ import (
 
 // Storer は violations / schema の読み書きを抽象化する。テストで差し替え可能。
 type Storer interface {
-	ListViolationsPaged(limit, offset int) ([]engine.Violation, error)
-	ListViolationsByTablePaged(table string, limit, offset int) ([]engine.Violation, error)
-	CountViolations() (int, error)
-	CountViolationsByTable(table string) (int, error)
+	// table が空文字のときは全 table を対象にする。
+	ListViolationsFor(table string, limit, offset int) ([]engine.Violation, error)
+	CountViolationsFor(table string) (int, error)
 	LatestDiff(table string) (*store.SchemaDiff, error)
 	ListDiffs() ([]store.SchemaDiff, error)
 }

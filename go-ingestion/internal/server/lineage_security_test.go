@@ -220,13 +220,12 @@ type errStore struct{ fakeStore }
 
 var errLeaky = errors.New("badger: open /var/lib/dataguard/db/000001.vlog: permission denied")
 
-func (errStore) CountViolations() (int, error)              { return 0, errLeaky }
-func (errStore) CountViolationsByTable(string) (int, error) { return 0, errLeaky }
+func (errStore) CountViolationsFor(string) (int, error) { return 0, errLeaky }
 func (errStore) LatestDiff(string) (*store.SchemaDiff, error) {
 	return nil, errLeaky
 }
 func (errStore) ListDiffs() ([]store.SchemaDiff, error) { return nil, errLeaky }
-func (errStore) ListViolationsPaged(int, int) ([]engine.Violation, error) {
+func (errStore) ListViolationsFor(string, int, int) ([]engine.Violation, error) {
 	return nil, errLeaky
 }
 

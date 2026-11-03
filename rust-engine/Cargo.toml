@@ -30,5 +30,4 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
 tonic-prost-build = "0.14"
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3"
