@@ -8,7 +8,7 @@ on:
 
 jobs:
   go-ingestion:
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/go-test.yml@main
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/go-test.yml@d33890a74113f8ba8d8841a55b290007f72852ef # qa-workflows main (#167)
     with:
       go-version: "1.26"
       working-directory: go-ingestion
