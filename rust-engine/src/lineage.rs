@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use petgraph::graph::DiGraph;
 use serde::{Deserialize, Serialize};
 use sqlparser::ast::{
-    Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    CreateTable, Expr, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -122,11 +122,11 @@ fn analyze_statement(stmt: &Statement) -> StatementLineage {
                 sql_ref,
             }
         }
-        Statement::CreateTable {
+        Statement::CreateTable(CreateTable {
             name,
             query: Some(q),
             ..
-        } => {
+        }) => {
             let target = name.to_string();
             let sources = collect_query_sources(q);
             let columns = collect_select_columns(q);
@@ -139,7 +139,7 @@ fn analyze_statement(stmt: &Statement) -> StatementLineage {
             }
         }
         Statement::Insert(insert) => {
-            let target = insert.table_name.to_string();
+            let target = insert.table.to_string();
             let sources = insert
                 .source
                 .as_ref()
