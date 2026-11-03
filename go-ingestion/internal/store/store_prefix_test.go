@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/flipslidersand/dataguard-rail/internal/engine"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/engine"
 )
 
 // TestViolationKeyRanges は CountViolationsFor / ListViolationsFor が走査するキー範囲を、

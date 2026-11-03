@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flipslidersand/dataguard-rail/internal/alert"
-	"github.com/flipslidersand/dataguard-rail/internal/config"
-	"github.com/flipslidersand/dataguard-rail/internal/pipeline"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/alert"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/config"
+	"github.com/flipslidersand-labs/dataguard-rail/internal/pipeline"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
