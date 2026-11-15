@@ -11,4 +11,4 @@ permissions:
 jobs:
   triage:
     if: github.actor == 'dependabot[bot]'
-    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge.yml@2ca417cdbd9c5cea1919b894efff4b6cb5198d74 # qa-workflows#108 (自動マージの判断を promoter に集約, #106)
+    uses: flipslidersand-labs/qa-workflows/.github/workflows/dependabot-auto-merge.yml@04faebc9dfd7e4bd68b17397342fd3211b182ad9 # qa-workflows#108 (自動マージの判断を promoter に集約, #106)
