@@ -1,5 +1,7 @@
 # DataGuard Rail
 
+Release type: `service`
+
 Real-time data quality checking and column lineage tracking platform (Rust engine + Go ingestion layer).
 
 リアルタイムデータ品質チェック・カラムリネージュ追跡プラットフォーム（Rust + Go）。
